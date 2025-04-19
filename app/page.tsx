@@ -129,7 +129,7 @@ export default function Home() {
 
       {/* Banner Principal */}
       <div className="relative bg-gray-800 text-white h-96 flex items-center">
-        <div className="absolute inset-0 bg-[url('/banner-church.jpg')] bg-cover bg-center opacity-40"></div>
+        <div className="absolute inset-0 bg-[url('/images/banner-church.jpg')] bg-cover bg-center opacity-40"></div>
         <div className="container mx-auto px-4 z-10">
           <h2 className="text-4xl sm:text-5xl font-bold mb-4 max-w-2xl">
             {igreja.slogan}
