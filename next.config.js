@@ -9,9 +9,8 @@ const nextConfig = {
   },
   experimental: {
     missingSuspenseWithCSRBailout: false,
-    serverComponentsExternalPackages: ['firebase-admin'],
   },
-  // Ignorar erros relacionados a manifests
+  serverExternalPackages: ['firebase-admin'],
   onDemandEntries: {
     // period (in ms) where the server will keep pages in the buffer
     maxInactiveAge: 25 * 1000,
@@ -30,7 +29,7 @@ const nextConfig = {
   },
   // Desativar a geração de manifesto de referência de cliente para pastas com parênteses
   pageExtensions: ['js', 'jsx', 'ts', 'tsx'],
-  transpilePackages: ['firebase', 'firebase-admin']
+  transpilePackages: ['firebase']
 };
 
 module.exports = nextConfig; 
