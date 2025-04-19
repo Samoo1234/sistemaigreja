@@ -1,84 +1,80 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
-// Inicializa o app Firebase Admin apenas uma vez
+// Variáveis para armazenar as instâncias
 let adminApp;
 let adminDb = null;
 
-// Função para inicializar o Firebase Admin SDK com tratamento melhorado para chaves privadas
+// Função para processar corretamente a chave privada
+function processPrivateKey(key: string | undefined): string {
+  if (!key) return '';
+  
+  // Se a chave estiver codificada com \n literais, substituir por quebras de linha reais
+  if (key.includes('\\n')) {
+    return key.replace(/\\n/g, '\n');
+  }
+  
+  return key;
+}
+
+// Função para inicializar o Firebase Admin
 function initializeFirebaseAdmin() {
+  // Evitar inicialização duplicada
   if (getApps().length > 0) {
-    console.log('Firebase Admin já está inicializado');
+    console.log('Firebase Admin já inicializado');
     adminApp = getApps()[0];
     adminDb = getFirestore();
     return;
   }
 
   try {
-    // Configurações para o Firebase Admin SDK
-    const firebaseAdminConfig: any = {
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    };
-
-    // Tratamento da chave privada
-    if (process.env.FIREBASE_PRIVATE_KEY) {
-      // Certifique-se de que as quebras de linha sejam processadas corretamente
-      let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-      
-      // Se a chave contiver \n literais, substituir por quebras de linha reais
-      if (privateKey.includes('\\n')) {
-        privateKey = privateKey.replace(/\\n/g, '\n');
-      }
-      
-      firebaseAdminConfig.privateKey = privateKey;
-      console.log('Chave privada processada');
-    } else {
-      console.error('FIREBASE_PRIVATE_KEY não encontrada nas variáveis de ambiente');
+    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = processPrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+    
+    if (!projectId || !clientEmail || !privateKey) {
+      console.error('Credenciais Firebase Admin incompletas:',
+        !projectId ? 'Falta projectId' : '',
+        !clientEmail ? 'Falta clientEmail' : '',
+        !privateKey ? 'Falta privateKey' : '');
+      return;
     }
-
-    // Tentar carregar da variável codificada em base64 se disponível
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
-      try {
-        console.log('Tentando decodificar credenciais do Firebase de base64');
-        const decodedServiceAccount = JSON.parse(
-          Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString()
-        );
-        
-        // Usar as credenciais decodificadas
-        adminApp = initializeApp({
-          credential: cert(decodedServiceAccount),
-        });
-        console.log('Firebase Admin inicializado com credenciais base64');
-      } catch (error) {
-        console.error('Erro ao decodificar credenciais base64:', error);
-        throw error;
-      }
-    } 
-    // Se não tivermos base64, usar as configurações normais
-    else if (firebaseAdminConfig.projectId && firebaseAdminConfig.clientEmail && firebaseAdminConfig.privateKey) {
-      adminApp = initializeApp({
-        credential: cert(firebaseAdminConfig),
-      });
-      console.log('Firebase Admin inicializado com variáveis de ambiente');
-    } else {
-      throw new Error('Credenciais Firebase Admin incompletas nas variáveis de ambiente');
-    }
-
-    // Inicializa o serviço Firestore
+    
+    // Log dos primeiros caracteres da chave para debug (sem expor a chave completa)
+    console.log(`Inicializando Firebase Admin com projectId: ${projectId}`);
+    console.log(`Chave privada começa com: ${privateKey.substring(0, 10)}...`);
+    console.log(`Chave privada tem ${privateKey.length} caracteres`);
+    
+    // Inicializar o app com as credenciais processadas
+    adminApp = initializeApp({
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey
+      })
+    });
+    
+    // Inicializar Firestore
     adminDb = getFirestore();
     console.log('Firebase Admin inicializado com sucesso');
   } catch (error) {
+    // Log detalhado do erro para diagnóstico
     console.error('Erro ao inicializar Firebase Admin:', error);
-    throw error;
+    if (error instanceof Error) {
+      console.error('Mensagem de erro:', error.message);
+      console.error('Stack trace:', error.stack);
+    }
+    
+    // Não vamos lançar o erro, mas deixar adminDb como null para indicar falha
+    adminDb = null;
   }
 }
 
-// Inicializa o Firebase Admin
+// Inicializar o SDK
 try {
   initializeFirebaseAdmin();
 } catch (error) {
-  console.error('Falha ao inicializar Firebase Admin:', error);
+  console.error('Erro fatal na inicialização do Firebase Admin:', error);
 }
 
 export { adminDb }; 
