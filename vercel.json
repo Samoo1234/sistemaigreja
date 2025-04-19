@@ -3,13 +3,6 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install --legacy-peer-deps",
   "framework": "nextjs",
-  "redirects": [
-    {
-      "source": "/login",
-      "destination": "/login",
-      "permanent": true
-    }
-  ],
   "headers": [
     {
       "source": "/(.*)",
