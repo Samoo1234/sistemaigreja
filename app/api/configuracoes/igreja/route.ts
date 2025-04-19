@@ -1,46 +1,38 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { doc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { NextResponse } from 'next/server';
+import { db } from '../../../../lib/firebase/config';
+import { collection, doc, getDoc, setDoc } from 'firebase/firestore';
 
-// Tipo para as configurações da igreja
-type IgrejaConfig = {
-  nome: string;
-  nomeAbreviado: string;
-  logo?: string;
-  endereco: string;
-  cidade: string;
-  estado: string;
-  cep: string;
-  telefone: string;
-  email: string;
-  site?: string;
-  corPrimaria: string;
-  corSecundaria: string;
-};
+export const dynamic = 'force-dynamic';
 
-// Handler da API para método POST
-export async function POST(request: NextRequest) {
+export async function GET() {
   try {
-    // Obtém os dados da requisição
-    const data = await request.json() as IgrejaConfig;
-    
-    // Salva os dados no Firestore
     const configRef = doc(db, 'configuracoes', 'igreja');
-    await setDoc(configRef, data);
+    const configDoc = await getDoc(configRef);
+    
+    if (!configDoc.exists()) {
+      return NextResponse.json({ error: 'Configuração não encontrada' }, { status: 404 });
+    }
+    
+    return NextResponse.json(configDoc.data());
+  } catch (error) {
+    console.error('Erro ao buscar configurações da igreja:', error);
+    return NextResponse.json({ error: 'Erro ao buscar configurações' }, { status: 500 });
+  }
+}
 
-    // Retorna sucesso
+export async function POST(request: Request) {
+  try {
+    const data = await request.json();
+    const configRef = doc(db, 'configuracoes', 'igreja');
+    
+    await setDoc(configRef, data, { merge: true });
+    
     return NextResponse.json({ 
-      success: true,
-      message: 'Configurações salvas com sucesso no Firestore',
-      timestamp: new Date().toISOString()
+      message: 'Configurações atualizadas com sucesso',
+      data 
     });
   } catch (error) {
-    console.error('Erro na API:', error);
-    
-    // Retorna erro
-    return NextResponse.json({ 
-      success: false,
-      message: error instanceof Error ? error.message : 'Erro desconhecido'
-    }, { status: 500 });
+    console.error('Erro ao atualizar configurações da igreja:', error);
+    return NextResponse.json({ error: 'Erro ao atualizar configurações' }, { status: 500 });
   }
 } 
