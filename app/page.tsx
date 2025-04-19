@@ -76,7 +76,7 @@ export default function Home() {
     const unsubscribe = auth.onAuthStateChanged((user) => {
       if (user) {
         setIsLoggedIn(true)
-        router.push('/dashboard')
+        router.push('/secretaria')
       } else {
         setIsLoggedIn(false)
         setLoading(false)
