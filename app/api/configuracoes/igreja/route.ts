@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '../../../../lib/firebase/admin';
+import { Firestore } from 'firebase-admin/firestore';
 
 export const dynamic = 'force-dynamic';
+
+// Verificando se o adminDb está definido
+const firestore = adminDb as Firestore;
 
 // Função auxiliar para log de erros
 function logError(prefix: string, error: unknown) {
@@ -21,7 +25,7 @@ export async function GET() {
   
   try {
     // Verificar se o adminDb foi inicializado corretamente
-    if (!adminDb) {
+    if (!firestore) {
       console.error('API GET - Admin DB não inicializado - Verificar credenciais Firebase');
       return NextResponse.json({ 
         error: 'Serviço indisponível', 
@@ -30,7 +34,7 @@ export async function GET() {
     }
 
     console.log('API GET - Obtendo referência do documento');
-    const configRef = adminDb.collection('configuracoes').doc('igreja');
+    const configRef = firestore.collection('configuracoes').doc('igreja');
     
     console.log('API GET - Buscando documento');
     const configDoc = await configRef.get();
@@ -77,7 +81,7 @@ export async function POST(request: Request) {
   
   try {
     // Verificar se o adminDb foi inicializado corretamente
-    if (!adminDb) {
+    if (!firestore) {
       console.error('API POST - Admin DB não inicializado - Verificar credenciais Firebase');
       return NextResponse.json({ 
         error: 'Serviço indisponível', 
@@ -109,7 +113,7 @@ export async function POST(request: Request) {
     }
     
     console.log('API POST - Obtendo referência do documento');
-    const configRef = adminDb.collection('configuracoes').doc('igreja');
+    const configRef = firestore.collection('configuracoes').doc('igreja');
     
     console.log('API POST - Salvando documento');
     await configRef.set(data, { merge: true });
