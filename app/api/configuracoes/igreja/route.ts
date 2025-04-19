@@ -1,21 +1,25 @@
 import { NextResponse } from 'next/server';
-import { db } from '../../../../lib/firebase/config';
-import { collection, doc, getDoc, setDoc } from 'firebase/firestore';
+import { adminDb } from '../../../../lib/firebase/admin';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  console.log('API GET - Iniciando busca de configurações');
+  console.log('API GET - Iniciando busca de configurações com Admin SDK');
   try {
-    console.log('API GET - Obtendo referência do documento', { db });
-    const configRef = doc(db, 'configuracoes', 'igreja');
+    if (!adminDb) {
+      console.error('API GET - Admin DB não inicializado');
+      return NextResponse.json({ error: 'Serviço indisponível' }, { status: 500 });
+    }
+
+    console.log('API GET - Obtendo referência do documento');
+    const configRef = adminDb.collection('configuracoes').doc('igreja');
     
     console.log('API GET - Buscando documento');
-    const configDoc = await getDoc(configRef);
+    const configDoc = await configRef.get();
     
-    console.log('API GET - Documento encontrado?', configDoc.exists());
+    console.log('API GET - Documento encontrado?', configDoc.exists);
     
-    if (!configDoc.exists()) {
+    if (!configDoc.exists) {
       console.log('API GET - Documento não encontrado');
       return NextResponse.json({ error: 'Configuração não encontrada' }, { status: 404 });
     }
@@ -33,17 +37,22 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  console.log('API POST - Iniciando salvamento de configurações');
+  console.log('API POST - Iniciando salvamento de configurações com Admin SDK');
   try {
+    if (!adminDb) {
+      console.error('API POST - Admin DB não inicializado');
+      return NextResponse.json({ error: 'Serviço indisponível' }, { status: 500 });
+    }
+
     console.log('API POST - Lendo corpo da requisição');
     const data = await request.json();
     console.log('API POST - Dados recebidos:', data);
     
     console.log('API POST - Obtendo referência do documento');
-    const configRef = doc(db, 'configuracoes', 'igreja');
+    const configRef = adminDb.collection('configuracoes').doc('igreja');
     
     console.log('API POST - Salvando documento');
-    await setDoc(configRef, data, { merge: true });
+    await configRef.set(data, { merge: true });
     
     console.log('API POST - Documento salvo com sucesso');
     return NextResponse.json({ 
