@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -20,10 +20,13 @@ import {
 } from 'lucide-react'
 import { useIgrejaConfig } from '@/lib/contexts/igreja-config'
 import Image from 'next/image'
+import { auth } from '@/lib/firebase/config'
 
 export default function Home() {
   const router = useRouter()
   const { config } = useIgrejaConfig()
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [loading, setLoading] = useState(true)
   
   // Valores padrão para quando os dados não estiverem disponíveis
   const horariosPadrao = [
@@ -69,6 +72,28 @@ export default function Home() {
 
   const enderecoCompleto = `${igreja.endereco}, ${igreja.cidade} - ${igreja.estado}, ${igreja.cep}`
   
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) {
+        setIsLoggedIn(true)
+        router.push('/dashboard')
+      } else {
+        setIsLoggedIn(false)
+        setLoading(false)
+      }
+    })
+
+    return () => unsubscribe()
+  }, [router])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-xl">Carregando...</p>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Cabeçalho */}
