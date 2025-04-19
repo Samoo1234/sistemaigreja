@@ -7,9 +7,6 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  experimental: {
-    missingSuspenseWithCSRBailout: false,
-  },
   serverExternalPackages: ['firebase-admin'],
   onDemandEntries: {
     // period (in ms) where the server will keep pages in the buffer
