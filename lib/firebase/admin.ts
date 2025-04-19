@@ -5,10 +5,24 @@ import { getFirestore } from 'firebase-admin/firestore';
 const firebaseAdminConfig = {
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+  // Correção para o erro "error:1E08010C:DECODER routines::unsupported" no Vercel
   privateKey: process.env.FIREBASE_PRIVATE_KEY 
-    ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') 
+    ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n').replace(/\n/g, '\n') 
     : undefined,
 };
+
+// Se estiver usando JSON codificado em base64
+if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+  try {
+    const decodedServiceAccount = JSON.parse(
+      Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString()
+    );
+    Object.assign(firebaseAdminConfig, decodedServiceAccount);
+    console.log('Credenciais decodificadas com sucesso de base64');
+  } catch (error) {
+    console.error('Erro ao decodificar credenciais base64:', error);
+  }
+}
 
 // Inicializa o app Firebase Admin apenas uma vez
 let adminApp;

@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  output: 'export',
+  images: {
+    unoptimized: true,
+  },
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -29,4 +32,4 @@ const nextConfig = {
   transpilePackages: ['firebase']
 };
 
-module.exports = nextConfig; 
+module.exports = nextConfig;
