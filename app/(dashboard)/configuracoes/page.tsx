@@ -111,19 +111,31 @@ export default function ConfiguracoesPage() {
         btnSalvar.setAttribute('disabled', 'true');
       }
       
+      console.log('Iniciando salvamento das configurações', igrejaConfig);
+      
       // Salva via API em vez de usar apenas o contexto
       try {
+        console.log('Enviando dados para API...');
         // Faz requisição para a API que salva no Firestore
         const response = await fetch('/api/configuracoes/igreja', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(igrejaConfig)
+          body: JSON.stringify(igrejaConfig),
+          cache: 'no-store'
         });
         
+        console.log('Resposta recebida', { status: response.status, statusText: response.statusText });
+        
         if (!response.ok) {
-          throw new Error(`Erro ${response.status}: ${response.statusText}`);
+          const errorData = await response.json().catch(() => null);
+          console.error('Erro na resposta da API:', {
+            status: response.status,
+            statusText: response.statusText,
+            data: errorData
+          });
+          throw new Error(`Erro ${response.status}: ${errorData?.message || response.statusText}`);
         }
         
         const data = await response.json();
@@ -141,6 +153,7 @@ export default function ConfiguracoesPage() {
           description: "As configurações da igreja foram atualizadas com sucesso."
         });
       } catch (error) {
+        console.error('Erro na chamada da API:', error);
         throw error; // Propaga o erro para ser tratado no catch externo
       }
     } catch (error) {
