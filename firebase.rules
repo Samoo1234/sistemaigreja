@@ -1,16 +1,26 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Regras para a coleção de configurações - qualquer usuário autenticado pode ler/escrever
-    match /configuracoes/{document=**} {
-      allow read: if true;  // Permite leitura para todos (inclusive não autenticados)
-      allow write: if request.auth != null;  // Permite escrita apenas para usuários autenticados
+    // Permissões para a coleção de configurações
+    match /configuracoes/{documento} {
+      allow read: if true; // Qualquer pessoa pode ler as configurações
+      allow write: if request.auth != null; // Apenas usuários autenticados podem escrever
     }
     
-    // Regras para as demais coleções
-    match /{collection}/{document=**} {
-      allow read: if true;  // Acesso de leitura para desenvolvimento
-      allow write: if request.auth != null;  // Apenas usuários autenticados podem escrever
+    // Permissões para a coleção de usuários
+    match /usuarios/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Permissões para a coleção de membros
+    match /membros/{membroId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    
+    // Permissões para demais coleções
+    match /{document=**} {
+      allow read, write: if request.auth != null;
     }
   }
 } 
