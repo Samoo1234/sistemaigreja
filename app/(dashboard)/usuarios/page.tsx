@@ -1,0 +1,792 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogClose,
+} from '@/components/ui/dialog'
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
+import { 
+  Plus, 
+  Search, 
+  Edit, 
+  Trash2, 
+  Mail, 
+  Shield, 
+  User as UserIcon,
+  UserCheck,
+  UserMinus,
+  Church,
+  Key
+} from 'lucide-react'
+import { format } from 'date-fns'
+import { ptBR } from 'date-fns/locale'
+import { z } from 'zod'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useForm } from 'react-hook-form'
+import { collection, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore'
+import { db } from '@/lib/firebase/config'
+import { useAuth } from '@/lib/contexts/auth-context'
+import { useCongregacoes } from '@/lib/contexts/congregacoes-context'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Cargo } from '@/lib/types'
+import { permissoesPorCargo } from '@/lib/types'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Alert, AlertDescription, AlertTitle } from "../../../components/ui/alert"
+import ProtectedRoute from '@/components/auth/protected-route'
+import ProtectedContent from '@/components/auth/protected-content'
+
+// Tipo para os convites
+type Convite = {
+  id: string;
+  email: string;
+  nome: string;
+  cargo: string;
+  congregacaoId: string;
+  token: string;
+  status: 'pendente' | 'aceito' | 'expirado';
+  dataCriacao: Date;
+  dataExpiracao: Date;
+  criadoPor: string;
+  criadoPorId?: string;
+  criadoPorNome?: string;
+}
+
+// Define o esquema de validação para o formulário de convite
+const formSchema = z.object({
+  nome: z.string().min(2, 'Nome é obrigatório'),
+  email: z.string().email('Email inválido'),
+  cargo: z.string().min(1, 'Cargo é obrigatório'),
+  congregacaoId: z.string().min(1, 'Congregação é obrigatória'),
+})
+
+type FormValues = z.infer<typeof formSchema>
+
+// Tipo para os usuários
+type Usuario = {
+  id: string
+  nome: string
+  email: string
+  cargo: Cargo
+  congregacaoId: string
+  congregacao?: string
+  permissoes: string[]
+  dataCadastro: Date
+  ultimoAcesso: Date
+  status: 'ativo' | 'inativo'
+}
+
+export default function UsuariosPage() {
+  return (
+    <ProtectedRoute
+      requiredPermissions={['usuarios.visualizar']}
+      requiredCargos={['administrador']}
+      anyPermission={true}
+    >
+      <UsuariosContent />
+    </ProtectedRoute>
+  )
+}
+
+function UsuariosContent() {
+  const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [convites, setConvites] = useState<Convite[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'inativo'>('todos')
+  const [activeTab, setActiveTab] = useState<"usuarios" | "convites">("usuarios")
+  const [enviandoConvite, setEnviandoConvite] = useState(false)
+  const [sucessoConvite, setSucessoConvite] = useState(false)
+  const [erroConvite, setErroConvite] = useState<string | null>(null)
+  
+  // Obter dados de autenticação e congregações dos contextos
+  const { user, userData } = useAuth()
+  const { congregacoes } = useCongregacoes()
+  
+  useEffect(() => {
+    console.log('Congregações disponíveis no contexto:', congregacoes);
+  }, [congregacoes]);
+
+  const form = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      nome: '',
+      email: '',
+      cargo: 'usuario',
+      congregacaoId: userData?.congregacaoId || '',
+    }
+  })
+
+  // Carregar usuários e convites
+  useEffect(() => {
+    const carregarDados = async () => {
+      setLoading(true)
+      try {
+        // Buscar usuários
+        const usuariosRef = collection(db, 'usuarios')
+        const usuariosSnapshot = await getDocs(usuariosRef)
+        const usuariosData: Usuario[] = []
+        
+        usuariosSnapshot.forEach((doc) => {
+          const data = doc.data()
+          const congregacao = congregacoes.find(c => c.id === data.congregacaoId)
+          
+          usuariosData.push({
+            id: doc.id,
+            nome: data.nome,
+            email: data.email,
+            cargo: data.cargo,
+            congregacaoId: data.congregacaoId,
+            congregacao: congregacao?.nome,
+            permissoes: data.permissoes || [],
+            dataCadastro: data.dataCadastro?.toDate() || new Date(),
+            ultimoAcesso: data.ultimoAcesso?.toDate() || new Date(),
+            status: data.status || 'ativo'
+          })
+        })
+        
+        setUsuarios(usuariosData)
+        
+        // Buscar convites
+        const convitesRef = collection(db, 'convites')
+        const convitesSnapshot = await getDocs(convitesRef)
+        const convitesData: Convite[] = []
+        
+        convitesSnapshot.forEach((doc) => {
+          const data = doc.data()
+          
+          convitesData.push({
+            id: doc.id,
+            email: data.email,
+            nome: data.nome || '',
+            cargo: data.perfil || data.cargo,
+            congregacaoId: data.congregacao || data.congregacaoId,
+            token: data.token,
+            status: data.status,
+            dataCriacao: data.dataCriacao?.toDate() || new Date(),
+            dataExpiracao: data.dataExpiracao?.toDate() || new Date(),
+            criadoPor: data.criadoPorNome || data.criadoPor || 'Sistema',
+            criadoPorId: data.criadoPorId,
+            criadoPorNome: data.criadoPorNome
+          })
+        })
+        
+        setConvites(convitesData)
+      } catch (error) {
+        console.error("Erro ao carregar dados:", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    carregarDados()
+  }, [congregacoes, userData?.congregacaoId])
+
+  // Filtra usuários com base na busca e status
+  const usuariosFiltrados = usuarios.filter(usuario => {
+    const matchesSearch = 
+      usuario.nome.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      usuario.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (usuario.congregacao && usuario.congregacao.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      usuario.cargo.toLowerCase().includes(searchQuery.toLowerCase())
+    
+    const matchesStatus = filtroStatus === 'todos' || usuario.status === filtroStatus
+    
+    return matchesSearch && matchesStatus
+  })
+
+  // Organiza usuários por nome
+  const usuariosOrdenados = [...usuariosFiltrados].sort((a, b) => a.nome.localeCompare(b.nome))
+
+  // Filtra convites (pendentes primeiro, depois por data de criação)
+  const convitesOrdenados = [...convites].sort((a, b) => {
+    if (a.status === 'pendente' && b.status !== 'pendente') return -1
+    if (a.status !== 'pendente' && b.status === 'pendente') return 1
+    return b.dataCriacao.getTime() - a.dataCriacao.getTime()
+  })
+
+  // Abre o diálogo para enviar convite
+  const handleNovoConvite = () => {
+    setSucessoConvite(false)
+    setErroConvite(null)
+    
+    console.log('Congregações disponíveis:', congregacoes);
+    
+    // Se não houver congregações, ainda assim precisamos de um valor padrão
+    const defaultCongregacaoId = congregacoes.length > 0 
+      ? (userData?.congregacaoId || congregacoes[0].id) 
+      : 'default';
+    
+    form.reset({
+      nome: '',
+      email: '',
+      cargo: 'usuario',
+      congregacaoId: defaultCongregacaoId,
+    })
+    setDialogOpen(true)
+  }
+
+  // Envia convite por email
+  const onSubmit = async (values: FormValues) => {
+    setEnviandoConvite(true)
+    setSucessoConvite(false)
+    setErroConvite(null)
+    
+    try {
+      // Encontrar a congregação selecionada para obter o nome
+      let congregacao = "matriz";
+      let congregacaoNome = "Congregação Matriz";
+      
+      // Se existirem congregações e uma foi selecionada (diferente de "default")
+      if (values.congregacaoId !== "default" && congregacoes.length > 0) {
+        const congregacaoSelecionada = congregacoes.find(c => c.id === values.congregacaoId);
+        if (congregacaoSelecionada) {
+          congregacao = congregacaoSelecionada.id;
+          congregacaoNome = congregacaoSelecionada.nome;
+        }
+      }
+      
+      // Mapeamento correto dos parâmetros para o modelo esperado pela API
+      const response = await fetch('/api/convites', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: values.email,
+          nome: values.nome,
+          perfil: values.cargo,
+          congregacao: congregacao,
+          congregacaoNome: congregacaoNome,
+          criadoPorId: user?.uid,
+          criadoPorNome: userData?.nome
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao enviar convite')
+      }
+
+      // Adicionar o novo convite à lista, convertendo os nomes de campo
+      // para o formato usado pelo frontend
+      setConvites([...convites, {
+        id: data.id,
+        email: data.email,
+        nome: data.nome,
+        cargo: data.perfil,
+        congregacaoId: data.congregacao,
+        token: data.token,
+        status: data.status,
+        dataCriacao: new Date(data.dataCriacao),
+        dataExpiracao: new Date(data.dataExpiracao),
+        criadoPor: data.criadoPorNome || userData?.nome || 'Sistema',
+        criadoPorId: data.criadoPorId || user?.uid,
+        criadoPorNome: data.criadoPorNome || userData?.nome
+      }])
+
+      setSucessoConvite(true)
+      setTimeout(() => {
+        setDialogOpen(false)
+        setSucessoConvite(false)
+      }, 3000)
+    } catch (error) {
+      console.error('Erro ao enviar convite:', error)
+      setErroConvite(error instanceof Error ? error.message : 'Erro ao enviar convite')
+    } finally {
+      setEnviandoConvite(false)
+    }
+  }
+
+  // Cancelar um convite
+  const handleCancelarConvite = async (id: string) => {
+    try {
+      await fetch(`/api/convites?id=${id}`, {
+        method: 'DELETE'
+      })
+      
+      // Remover o convite da lista
+      setConvites(convites.filter(c => c.id !== id))
+    } catch (error) {
+      console.error('Erro ao cancelar convite:', error)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h1 className="text-3xl font-bold">Gerenciamento de Usuários</h1>
+        <ProtectedContent
+          permissions={['usuarios.adicionar']}
+          cargos={['administrador']}
+          anyPermission={true}
+        >
+          <Button onClick={handleNovoConvite}>
+            <Plus className="mr-2 h-4 w-4" />
+            Convidar Usuário
+          </Button>
+        </ProtectedContent>
+      </div>
+
+      <Tabs defaultValue="usuarios" className="w-full" onValueChange={(value) => setActiveTab(value as "usuarios" | "convites")}>
+        <TabsList className="grid w-full md:w-[400px] grid-cols-2">
+          <TabsTrigger value="usuarios" className="flex items-center">
+            <UserIcon className="mr-2 h-4 w-4" />
+            Usuários
+          </TabsTrigger>
+          <TabsTrigger value="convites" className="flex items-center">
+            <Mail className="mr-2 h-4 w-4" />
+            Convites
+          </TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="usuarios" className="space-y-6 mt-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-gray-600">Total de Usuários</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-bold">{usuarios.length}</p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-gray-600">Usuários Ativos</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-bold">{usuarios.filter(u => u.status === 'ativo').length}</p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-gray-600">Administradores</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-bold">{usuarios.filter(u => u.cargo === 'administrador').length}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <CardTitle>Lista de Usuários</CardTitle>
+                <div className="flex gap-4 w-full sm:w-auto">
+                  <Tabs defaultValue="todos" className="w-full sm:w-[200px]" onValueChange={(value) => setFiltroStatus(value as any)}>
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="todos">Todos</TabsTrigger>
+                      <TabsTrigger value="ativo">Ativos</TabsTrigger>
+                      <TabsTrigger value="inativo">Inativos</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                    <Input
+                      placeholder="Buscar usuários..."
+                      className="pl-8"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="space-y-4">
+                  {[...Array(4)].map((_, index) => (
+                    <div key={index} className="animate-pulse">
+                      <div className="h-12 bg-gray-200 rounded-md mb-4"></div>
+                    </div>
+                  ))}
+                </div>
+              ) : usuariosOrdenados.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">Nenhum usuário encontrado.</p>
+                  <Button
+                    variant="outline"
+                    className="mt-4"
+                    onClick={handleNovoConvite}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Convidar Usuário
+                  </Button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nome</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Cargo</TableHead>
+                        <TableHead>Congregação</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Último Acesso</TableHead>
+                        <TableHead className="text-right">Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {usuariosOrdenados.map((usuario) => (
+                        <TableRow key={usuario.id}>
+                          <TableCell>
+                            <div className="flex items-center space-x-3">
+                              <Avatar>
+                                <AvatarFallback>{usuario.nome.charAt(0)}</AvatarFallback>
+                              </Avatar>
+                              <div className="font-medium">{usuario.nome}</div>
+                            </div>
+                          </TableCell>
+                          <TableCell>{usuario.email}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center">
+                              {usuario.cargo === 'administrador' ? (
+                                <Shield className="mr-1 h-4 w-4 text-primary" />
+                              ) : usuario.cargo === 'pastor' ? (
+                                <Church className="mr-1 h-4 w-4 text-emerald-600" />
+                              ) : (
+                                <UserIcon className="mr-1 h-4 w-4 text-gray-500" />
+                              )}
+                              <span className="capitalize">{usuario.cargo}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>{usuario.congregacao || 'Matriz'}</TableCell>
+                          <TableCell>
+                            <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                              ${usuario.status === 'ativo' 
+                                ? 'bg-green-100 text-green-800' 
+                                : 'bg-orange-100 text-orange-800'
+                              }`}>
+                              {usuario.status === 'ativo' 
+                                ? 'Ativo' 
+                                : 'Inativo'
+                              }
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {format(usuario.ultimoAcesso, "dd/MM/yy HH:mm")}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <ProtectedContent
+                              permissions={['usuarios.editar']}
+                              cargos={['administrador']}
+                              anyPermission={true}
+                            >
+                              <Button
+                                variant="ghost" 
+                                size="icon"
+                              >
+                                <Key className="h-4 w-4" />
+                              </Button>
+                            </ProtectedContent>
+                            <ProtectedContent
+                              permissions={['usuarios.editar']}
+                              cargos={['administrador']}
+                              anyPermission={true}
+                            >
+                              {usuario.status === 'ativo' ? (
+                                <Button
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-orange-500"
+                                >
+                                  <UserMinus className="h-4 w-4" />
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-green-500"
+                                >
+                                  <UserCheck className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </ProtectedContent>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        <TabsContent value="convites" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <CardTitle>Convites Enviados</CardTitle>
+                <Button onClick={handleNovoConvite}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Enviar Novo Convite
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="space-y-4">
+                  {[...Array(3)].map((_, index) => (
+                    <div key={index} className="animate-pulse">
+                      <div className="h-12 bg-gray-200 rounded-md mb-4"></div>
+                    </div>
+                  ))}
+                </div>
+              ) : convites.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">Nenhum convite enviado.</p>
+                  <Button
+                    variant="outline"
+                    className="mt-4"
+                    onClick={handleNovoConvite}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Enviar Convite
+                  </Button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Nome</TableHead>
+                        <TableHead>Cargo</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Data de Envio</TableHead>
+                        <TableHead>Expira em</TableHead>
+                        <TableHead className="text-right">Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {convitesOrdenados.map((convite) => (
+                        <TableRow key={convite.id}>
+                          <TableCell>{convite.email}</TableCell>
+                          <TableCell>{convite.nome || '-'}</TableCell>
+                          <TableCell>{convite.cargo}</TableCell>
+                          <TableCell>
+                            <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                              ${convite.status === 'pendente' 
+                                ? 'bg-yellow-100 text-yellow-800' 
+                                : convite.status === 'aceito'
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                              {convite.status === 'pendente' 
+                                ? 'Pendente' 
+                                : convite.status === 'aceito'
+                                  ? 'Aceito'
+                                  : 'Expirado'
+                              }
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {format(convite.dataCriacao, "dd/MM/yy HH:mm")}
+                          </TableCell>
+                          <TableCell>
+                            {format(convite.dataExpiracao, "dd/MM/yy")}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {convite.status === 'pendente' && (
+                              <>
+                                <Button
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => {
+                                    // Copiar link para o clipboard
+                                    const baseUrl = window.location.origin
+                                    const url = `${baseUrl}/registrar?token=${convite.token}`
+                                    navigator.clipboard.writeText(url)
+                                    alert('Link copiado para a área de transferência!')
+                                  }}
+                                >
+                                  <Mail className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-red-500"
+                                  onClick={() => handleCancelarConvite(convite.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Diálogo para enviar convite */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Enviar Convite</DialogTitle>
+            <DialogDescription>
+              Preencha os detalhes para enviar um convite por email.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {sucessoConvite && (
+            <Alert className="bg-green-50 border-green-200 text-green-800">
+              <AlertTitle>Convite enviado com sucesso!</AlertTitle>
+              <AlertDescription>
+                O destinatário receberá um email com o link para criar sua conta.
+              </AlertDescription>
+            </Alert>
+          )}
+          
+          {erroConvite && (
+            <Alert className="bg-red-50 border-red-200 text-red-800">
+              <AlertTitle>Erro ao enviar convite</AlertTitle>
+              <AlertDescription>{erroConvite}</AlertDescription>
+            </Alert>
+          )}
+          
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input type="email" placeholder="email@exemplo.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="nome"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nome (opcional)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Nome do usuário" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="cargo"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Cargo</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                      value={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione um cargo" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="administrador">Administrador</SelectItem>
+                        <SelectItem value="pastor">Pastor</SelectItem>
+                        <SelectItem value="secretario">Secretário</SelectItem>
+                        <SelectItem value="tesoureiro">Tesoureiro</SelectItem>
+                        <SelectItem value="lider_ministerio">Líder de Ministério</SelectItem>
+                        <SelectItem value="usuario">Usuário Básico</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="congregacaoId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Congregação</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                      value={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione uma congregação" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {congregacoes.length > 0 ? (
+                          congregacoes.map((congregacao) => (
+                            <SelectItem key={congregacao.id} value={congregacao.id}>
+                              {congregacao.nome}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="default">Congregação Matriz</SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <DialogFooter className="mt-6">
+                <DialogClose asChild>
+                  <Button type="button" variant="outline">Cancelar</Button>
+                </DialogClose>
+                <Button 
+                  type="submit" 
+                  disabled={enviandoConvite || sucessoConvite}
+                >
+                  {enviandoConvite ? 'Enviando...' : 'Enviar Convite'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+} 

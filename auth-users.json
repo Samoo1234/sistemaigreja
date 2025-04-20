@@ -1,0 +1,12 @@
+{"users": [
+{
+  "localId": "D9RVv11UJ7cx32mdkhCHxrPPy1E2",
+  "email": "admin@igreja.com",
+  "emailVerified": false,
+  "passwordHash": "W31tvL7y4so8kuy4wX0l3SBZjnlpYlfWQsEa40g/+FiiUz+a3pb+hRrGdRWTezPNaell44lgapKuKd32a4Sz9w==",
+  "salt": "aPwe0naEqEg6Ig==",
+  "lastSignedInAt": "1745162215777",
+  "createdAt": "1745031178788",
+  "disabled": false,
+  "providerUserInfo": []
+}]}
