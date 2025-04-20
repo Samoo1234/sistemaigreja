@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth'
 import { doc, setDoc } from 'firebase/firestore'
@@ -13,7 +13,20 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { Convite } from '@/app/api/convites/route'
+
+// Interface Convite
+interface Convite {
+  id: string;
+  email: string;
+  nome: string;
+  cargo: string;
+  congregacaoId: string;
+  congregacaoNome: string;
+  status: 'pendente' | 'aceito' | 'rejeitado';
+  token: string;
+  dataCriacao: string;
+  dataExpiracao: string;
+}
 
 const formSchema = z.object({
   nome: z.string().min(2, 'O nome é obrigatório'),
@@ -27,7 +40,20 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>
 
-export default function RegistrarPage() {
+// Componente de carregamento para o Suspense
+function Loading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+        <p className="mt-4 text-xl">Carregando...</p>
+      </div>
+    </div>
+  );
+}
+
+// Componente principal de registro
+function RegistrarPageContent() {
   const [convite, setConvite] = useState<Convite | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -250,7 +276,7 @@ export default function RegistrarPage() {
                 name="nome"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Nome Completo</FormLabel>
+                    <FormLabel>Nome</FormLabel>
                     <FormControl>
                       <Input placeholder="Seu nome completo" {...field} />
                     </FormControl>
@@ -258,7 +284,7 @@ export default function RegistrarPage() {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="email"
@@ -268,16 +294,16 @@ export default function RegistrarPage() {
                     <FormControl>
                       <Input 
                         type="email" 
+                        placeholder="seu@email.com" 
                         {...field} 
-                        disabled={true} 
-                        className="bg-gray-100" 
+                        disabled={!!convite?.email}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="senha"
@@ -285,13 +311,17 @@ export default function RegistrarPage() {
                   <FormItem>
                     <FormLabel>Senha</FormLabel>
                     <FormControl>
-                      <Input type="password" placeholder="Mínimo 6 caracteres" {...field} />
+                      <Input 
+                        type="password" 
+                        placeholder="Mínimo de 6 caracteres" 
+                        {...field} 
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="confirmacao"
@@ -299,29 +329,52 @@ export default function RegistrarPage() {
                   <FormItem>
                     <FormLabel>Confirmar Senha</FormLabel>
                     <FormControl>
-                      <Input type="password" placeholder="Digite a senha novamente" {...field} />
+                      <Input 
+                        type="password" 
+                        placeholder="Confirme sua senha" 
+                        {...field} 
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
+
+              {error && (
+                <div className="bg-red-50 p-4 rounded-md border border-red-200 text-red-600 text-sm">
+                  {error}
+                </div>
+              )}
+
               <Button 
                 type="submit" 
-                className="w-full mt-6" 
+                className="w-full" 
                 disabled={loading}
               >
-                {loading ? 'Criando Conta...' : 'Criar Conta'}
+                {loading ? 'Processando...' : 'Criar Conta'}
               </Button>
             </form>
           </Form>
         </CardContent>
         <CardFooter className="flex justify-center">
-          <p className="text-sm text-gray-500">
-            Já tem uma conta? <a href="/login" className="text-primary hover:underline">Fazer login</a>
-          </p>
+          <Button 
+            variant="link" 
+            onClick={() => router.push('/login')}
+            className="text-sm"
+          >
+            Já tem uma conta? Faça login
+          </Button>
         </CardFooter>
       </Card>
     </div>
   )
+}
+
+// Componente principal com Suspense
+export default function RegistrarPage() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <RegistrarPageContent />
+    </Suspense>
+  );
 } 
