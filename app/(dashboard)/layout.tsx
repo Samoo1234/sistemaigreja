@@ -1,36 +1,48 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { AuthProvider, useAuth } from '@/lib/contexts/auth-context'
+import { CongregacoesProvider } from '@/lib/contexts/congregacoes-context'
+import ProtectedRoute from '@/components/auth/protected-route'
+import PermissionGate from '@/components/auth/permission-gate'
+import CongregacaoSelector from '@/components/congregacao-selector'
+import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
-import { auth } from '@/lib/firebase/config'
-import { onAuthStateChanged } from 'firebase/auth'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { 
-  Users, 
-  Church, 
   Bookmark, 
   FileText, 
   Coins, 
+  Church,
   Menu, 
   Home, 
   LogOut,
   Share2,
-  Settings
+  Settings,
+  UserIcon
 } from 'lucide-react'
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
-import { db } from '@/lib/firebase/config'
 import { useIgrejaConfig } from '@/lib/contexts/igreja-config'
+import { Permissao } from '@/lib/types'
 
-const navigationItems = [
-  { name: 'Dashboard', href: '/dashboard', icon: Home },
-  { name: 'Secretaria', href: '/secretaria', icon: FileText },
-  { name: 'Tesouraria', href: '/tesouraria', icon: Coins },
-  { name: 'Congregações', href: '/congregacoes', icon: Church },
-  { name: 'Redes Sociais', href: '/redes-sociais', icon: Share2 },
-  { name: 'Configurações', href: '/configuracoes', icon: Settings },
+// Tipagem correta para os itens de navegação
+type NavigationItem = {
+  name: string;
+  href: string;
+  icon: React.ElementType;
+  requiredPermissions: Permissao[];
+}
+
+// Adicionar propriedade de permissões necessárias para cada item de navegação
+const navigationItems: NavigationItem[] = [
+  { name: 'Dashboard', href: '/dashboard', icon: Home, requiredPermissions: [] },
+  { name: 'Secretaria', href: '/secretaria', icon: FileText, requiredPermissions: ['membros.visualizar'] },
+  { name: 'Tesouraria', href: '/tesouraria', icon: Coins, requiredPermissions: ['financas.visualizar'] },
+  { name: 'Congregações', href: '/congregacoes', icon: Church, requiredPermissions: ['congregacoes.visualizar'] },
+  { name: 'Usuários', href: '/usuarios', icon: UserIcon, requiredPermissions: [] },
+  { name: 'Redes Sociais', href: '/redes-sociais', icon: Share2, requiredPermissions: [] },
+  { name: 'Configurações', href: '/configuracoes', icon: Settings, requiredPermissions: ['configuracoes.visualizar'] },
 ]
 
 export default function DashboardLayout({
@@ -38,64 +50,41 @@ export default function DashboardLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  const router = useRouter()
-  const pathname = usePathname() || ''
-  const [loading, setLoading] = useState(true)
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  const { config, carregando } = useIgrejaConfig()
+  return (
+    <AuthProvider>
+      <CongregacoesProvider>
+        <ProtectedRoute>
+          <DashboardContent>{children}</DashboardContent>
+        </ProtectedRoute>
+      </CongregacoesProvider>
+    </AuthProvider>
+  );
+}
 
+// Componente interno para o conteúdo do dashboard
+function DashboardContent({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() || '';
+  const { config, carregando } = useIgrejaConfig();
+  const { logout, hasPermission, isCargo, userData } = useAuth();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Log de debug para verificar as permissões do usuário logado
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        router.push('/login')
-      } else {
-        try {
-          // Verifica se o usuário existe no Firestore também
-          const userRef = doc(db, 'usuarios', user.uid)
-          const userDoc = await getDoc(userRef)
-          
-          if (!userDoc.exists()) {
-            // Se o usuário não existir no Firestore, cria um documento para ele
-            await setDoc(userRef, {
-              nome: user.displayName || 'Usuário',
-              email: user.email,
-              cargo: 'Administrador',
-              ultimoAcesso: new Date(),
-              dataCadastro: new Date()
-            })
-          } else {
-            // Atualiza o último acesso
-            await updateDoc(userRef, {
-              ultimoAcesso: new Date()
-            })
-          }
-          
-          setLoading(false)
-        } catch (error) {
-          console.error("Erro ao verificar usuário no Firestore:", error)
-          setLoading(false)
-        }
-      }
-    })
-
-    return () => unsubscribe()
-  }, [router])
-
-  const handleSignOut = async () => {
-    try {
-      await auth.signOut()
-      router.push('/')
-    } catch (error) {
-      console.error('Erro ao sair:', error)
+    if (userData) {
+      console.log('Usuário logado:', userData);
+      console.log('Cargo do usuário:', userData.cargo);
+      console.log('Permissões do usuário:', userData.permissoes);
+      console.log('Tem permissão de visualizar usuários:', hasPermission('usuarios.visualizar'));
+      console.log('É administrador:', isCargo('administrador'));
     }
-  }
+  }, [userData, hasPermission, isCargo]);
 
-  if (loading || carregando) {
+  if (carregando) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-xl">Carregando...</p>
       </div>
-    )
+    );
   }
 
   return (
@@ -123,25 +112,47 @@ export default function DashboardLayout({
             {navigationItems.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
               const Icon = item.icon
+              
               return (
                 <li key={item.name}>
-                  <Link 
-                    href={item.href}
-                    className={`flex items-center p-2 rounded-md ${
-                      isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700'
-                    }`}
-                  >
-                    <Icon className="mr-3 h-5 w-5" />
-                    {item.name}
-                  </Link>
+                  {item.requiredPermissions.length > 0 ? (
+                    <PermissionGate
+                      permissions={item.requiredPermissions}
+                      anyPermission={true}
+                      cargos={['administrador']}
+                    >
+                      <Link 
+                        href={item.href}
+                        className={`flex items-center p-2 rounded-md ${
+                          isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700'
+                        }`}
+                      >
+                        <Icon className="mr-3 h-5 w-5" />
+                        {item.name}
+                      </Link>
+                    </PermissionGate>
+                  ) : (
+                    <Link 
+                      href={item.href}
+                      className={`flex items-center p-2 rounded-md ${
+                        isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700'
+                      }`}
+                    >
+                      <Icon className="mr-3 h-5 w-5" />
+                      {item.name}
+                    </Link>
+                  )}
                 </li>
               )
             })}
           </ul>
         </nav>
         <div className="p-4 border-t border-gray-700">
+          <div className="mb-4">
+            <CongregacaoSelector />
+          </div>
           <Button 
-            onClick={handleSignOut}
+            onClick={logout}
             variant="ghost" 
             className="w-full flex items-center text-white hover:text-white hover:bg-gray-700"
           >
@@ -195,26 +206,49 @@ export default function DashboardLayout({
                 {navigationItems.map((item) => {
                   const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
                   const Icon = item.icon
+                  
                   return (
                     <li key={item.name}>
-                      <Link 
-                        href={item.href}
-                        className={`flex items-center p-2 rounded-md ${
-                          isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700'
-                        }`}
-                        onClick={() => setIsMobileMenuOpen(false)}
-                      >
-                        <Icon className="mr-3 h-5 w-5" />
-                        {item.name}
-                      </Link>
+                      {item.requiredPermissions.length > 0 ? (
+                        <PermissionGate
+                          permissions={item.requiredPermissions}
+                          anyPermission={true}
+                          cargos={['administrador']}
+                        >
+                          <Link 
+                            href={item.href}
+                            className={`flex items-center p-2 rounded-md ${
+                              isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700'
+                            }`}
+                            onClick={() => setIsMobileMenuOpen(false)}
+                          >
+                            <Icon className="mr-3 h-5 w-5" />
+                            {item.name}
+                          </Link>
+                        </PermissionGate>
+                      ) : (
+                        <Link 
+                          href={item.href}
+                          className={`flex items-center p-2 rounded-md ${
+                            isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                          onClick={() => setIsMobileMenuOpen(false)}
+                        >
+                          <Icon className="mr-3 h-5 w-5" />
+                          {item.name}
+                        </Link>
+                      )}
                     </li>
                   )
                 })}
               </ul>
             </nav>
             <div className="p-4 border-t border-gray-700">
+              <div className="mb-4">
+                <CongregacaoSelector />
+              </div>
               <Button 
-                onClick={handleSignOut}
+                onClick={logout}
                 variant="ghost" 
                 className="w-full flex items-center text-white hover:text-white hover:bg-gray-700"
               >
@@ -233,5 +267,5 @@ export default function DashboardLayout({
         </div>
       </main>
     </div>
-  )
+  );
 } 
