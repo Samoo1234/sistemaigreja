@@ -16,6 +16,8 @@ type IgrejaConfig = {
   telefone: string
   email: string
   site?: string
+  pastor?: string
+  cnpj?: string
   corPrimaria: string
   corSecundaria: string
   horarios?: Array<{
@@ -41,6 +43,8 @@ const configPadrao: IgrejaConfig = {
   telefone: '(00) 0000-0000',
   email: 'contato@igreja.org',
   site: 'www.igreja.org',
+  pastor: 'Pastor Principal',
+  cnpj: '',
   corPrimaria: '#111827',
   corSecundaria: '#4B5563',
   horarios: [
@@ -128,6 +132,8 @@ export function IgrejaConfigProvider({ children }: { children: ReactNode }) {
         telefone: configAtualizada.telefone || configPadrao.telefone,
         email: configAtualizada.email || configPadrao.email,
         site: configAtualizada.site || configPadrao.site,
+        pastor: configAtualizada.pastor || configPadrao.pastor,
+        cnpj: configAtualizada.cnpj || configPadrao.cnpj,
         corPrimaria: configAtualizada.corPrimaria || configPadrao.corPrimaria,
         corSecundaria: configAtualizada.corSecundaria || configPadrao.corSecundaria,
         horarios: configAtualizada.horarios || configPadrao.horarios,

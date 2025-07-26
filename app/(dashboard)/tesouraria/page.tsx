@@ -43,7 +43,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { ArrowUpRight, Calendar as CalendarIcon, Plus, Search, Edit, Trash2, TrendingUp, TrendingDown, DollarSign, MapPin, FileText } from 'lucide-react'
+import { ArrowUpRight, Calendar as CalendarIcon, Plus, Search, Edit, Trash2, TrendingUp, TrendingDown, DollarSign, MapPin, FileText, Printer } from 'lucide-react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -52,16 +52,69 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { db } from '@/lib/firebase/config'
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc } from 'firebase/firestore'
+import { useCongregacoes } from '@/lib/contexts/congregacoes-context'
+import { useIgrejaConfig } from '@/lib/contexts/igreja-config'
+import ProtectedRoute from '@/components/auth/protected-route'
+import ProtectedContent from '@/components/auth/protected-content'
+
+// Função para validar CNPJ
+function validarCNPJ(cnpj: string): boolean {
+  // Remove caracteres não numéricos
+  const cnpjLimpo = cnpj.replace(/[^\d]/g, '')
+  
+  // Verifica se tem 14 dígitos
+  if (cnpjLimpo.length !== 14) return false
+  
+  // Verifica se todos os dígitos são iguais
+  if (/^(\d)\1+$/.test(cnpjLimpo)) return false
+  
+  // Validação dos dígitos verificadores
+  let soma = 0
+  let peso = 2
+  
+  // Primeiro dígito verificador
+  for (let i = 11; i >= 0; i--) {
+    soma += parseInt(cnpjLimpo.charAt(i)) * peso
+    peso = peso === 9 ? 2 : peso + 1
+  }
+  
+  let digito = 11 - (soma % 11)
+  if (digito > 9) digito = 0
+  
+  if (parseInt(cnpjLimpo.charAt(12)) !== digito) return false
+  
+  // Segundo dígito verificador
+  soma = 0
+  peso = 2
+  
+  for (let i = 12; i >= 0; i--) {
+    soma += parseInt(cnpjLimpo.charAt(i)) * peso
+    peso = peso === 9 ? 2 : peso + 1
+  }
+  
+  digito = 11 - (soma % 11)
+  if (digito > 9) digito = 0
+  
+  return parseInt(cnpjLimpo.charAt(13)) === digito
+}
+
+// Função para formatar CNPJ
+function formatarCNPJ(cnpj: string): string {
+  const cnpjLimpo = cnpj.replace(/[^\d]/g, '')
+  return cnpjLimpo.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+}
 
 // Define o esquema de validação para o formulário
 const formSchema = z.object({
   descricao: z.string().min(3, 'A descrição deve ter pelo menos 3 caracteres'),
-  valor: z.coerce.number().min(0.01, 'O valor deve ser maior que zero'),
+  valor: z.number().min(0.01, 'O valor deve ser maior que zero'),
   tipo: z.enum(['entrada', 'saida']),
   categoria: z.string().min(1, 'Selecione uma categoria'),
-  data: z.date({ required_error: 'Por favor, selecione uma data' }),
-  responsavel: z.string().min(3, 'Nome do responsável deve ter pelo menos 3 caracteres'),
-  congregacao: z.string().optional(),
+  data: z.date().optional(),
+  responsavel: z.string().min(3, 'O responsável deve ter pelo menos 3 caracteres'),
+  congregacaoId: z.string().min(1, 'Selecione uma congregação'),
+  comprovante: z.string().optional(),
+  observacao: z.string().optional(),
 })
 
 type FormValues = z.infer<typeof formSchema>
@@ -69,24 +122,46 @@ type FormValues = z.infer<typeof formSchema>
 // Tipo para as transações
 type Transacao = {
   id: string
-  descricao: string
-  valor: number
   tipo: 'entrada' | 'saida'
+  descricao: string
   categoria: string
+  valor: number
   data: Date
   responsavel: string
-  congregacao?: string
+  congregacaoId: string // Alterado para usar ID da congregação
+  congregacao?: string // Nome da congregação para exibição
+  comprovante?: string
+  observacao?: string
 }
 
 export default function TesourariaPage() {
+  return (
+    <ProtectedRoute
+      requiredPermissions={['financas.visualizar']}
+    >
+      <TesourariaContent />
+    </ProtectedRoute>
+  )
+}
+
+function TesourariaContent() {
   const [transacoes, setTransacoes] = useState<Transacao[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
-  const [transacaoParaEditar, setTransacaoParaEditar] = useState<Transacao | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [transacaoParaEditar, setTransacaoParaEditar] = useState<Transacao | null>(null)
+  const [activeTab, setActiveTab] = useState<"transacoes" | "relatorios" | "congregacoes">("transacoes")
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'entrada' | 'saida'>('todos')
-  const [congregacaoSelecionada, setCongregacaoSelecionada] = useState<string>('todas')
   const [periodoRelatorio, setPeriodoRelatorio] = useState<'mes' | 'trimestre' | 'ano'>('mes')
+  const [congregacaoSelecionada, setCongregacaoSelecionada] = useState<string>('todas')
+  const [comprovanteOpen, setComprovanteOpen] = useState(false)
+  const [transacaoComprovante, setTransacaoComprovante] = useState<Transacao | null>(null)
+  
+  // Usar o contexto de congregações e configurações da igreja
+  const { congregacoes, congregacaoAtual } = useCongregacoes()
+  const { config } = useIgrejaConfig()
+  
+
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -96,47 +171,68 @@ export default function TesourariaPage() {
       tipo: 'entrada',
       categoria: '',
       responsavel: '',
-      congregacao: '',
+      congregacaoId: '',
     }
   })
 
   // Simula o carregamento de transações
   useEffect(() => {
+    // Em um caso real, isso buscaria as transações do Firebase
+    const mockTransacoes: Transacao[] = [
+      {
+        id: '1',
+        tipo: 'entrada',
+        descricao: 'Dízimos Domingo',
+        categoria: 'Dízimo',
+        valor: 3500,
+        data: new Date('2023-05-07T10:00:00'),
+        responsavel: 'João Silva',
+        congregacaoId: '1',
+        congregacao: 'Congregação Sede'
+      },
+      // ... outros dados de exemplo
+    ]
+
+    // Sempre buscar do Firestore
     const carregarTransacoes = async () => {
-      setLoading(true);
       try {
-        // Buscar transações do Firebase
         const transacoesRef = collection(db, 'transacoes');
-        const transacoesSnapshot = await getDocs(transacoesRef);
+        const snapshot = await getDocs(transacoesRef);
         const transacoesData: Transacao[] = [];
         
-        transacoesSnapshot.forEach((doc) => {
+        snapshot.forEach((doc) => {
           const data = doc.data();
+          const congregacaoObj = congregacoes.find(c => c.id === data.congregacaoId);
+          
           transacoesData.push({
             id: doc.id,
-            descricao: data.descricao,
-            valor: data.valor,
             tipo: data.tipo,
+            descricao: data.descricao,
             categoria: data.categoria,
-            data: data.data ? new Date(data.data.toDate()) : new Date(),
+            valor: data.valor,
+            data: data.data.toDate(),
             responsavel: data.responsavel,
-            congregacao: data.congregacao
+            congregacaoId: data.congregacaoId,
+            congregacao: congregacaoObj?.nome || 'Desconhecida',
+            comprovante: data.comprovante,
+            observacao: data.observacao
           });
         });
         
         setTransacoes(transacoesData);
       } catch (error) {
         console.error("Erro ao carregar transações:", error);
+        setTransacoes(mockTransacoes); // Fallback para dados de exemplo
       } finally {
         setLoading(false);
       }
     };
     
     carregarTransacoes();
-  }, []);
+  }, [congregacoes]);
 
   // Lista de congregações
-  const congregacoes = [
+  const congregacoesList = [
     { id: '1', nome: 'Congregação Sede' },
     { id: '2', nome: 'Congregação Norte' },
     { id: '3', nome: 'Congregação Sul' },
@@ -144,7 +240,7 @@ export default function TesourariaPage() {
     { id: '5', nome: 'Congregação Oeste' },
   ]
 
-  // Filtra transações com base na busca e tipo
+  // Filtra transações com base na busca, tipo e congregação atual
   const transacoesFiltradas = transacoes.filter(transacao => {
     const matchesSearch = transacao.descricao.toLowerCase().includes(searchQuery.toLowerCase()) ||
       transacao.responsavel.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -153,7 +249,10 @@ export default function TesourariaPage() {
     
     const matchesTipo = filtroTipo === 'todos' || transacao.tipo === filtroTipo
     
-    return matchesSearch && matchesTipo
+    // Filtro por congregação - se não tiver uma congregação atual ou for admin mostra tudo, senão filtra
+    const matchesCongregacao = !congregacaoAtual || transacao.congregacaoId === congregacaoAtual.id
+    
+    return matchesSearch && matchesTipo && matchesCongregacao
   })
 
   // Organiza transações por data (mais recentes primeiro)
@@ -186,7 +285,9 @@ export default function TesourariaPage() {
       categoria: transacao.categoria,
       data: transacao.data,
       responsavel: transacao.responsavel,
-      congregacao: transacao.congregacao || '',
+      congregacaoId: transacao.congregacaoId,
+      comprovante: transacao.comprovante,
+      observacao: transacao.observacao,
     })
     setDialogOpen(true)
   }
@@ -201,7 +302,9 @@ export default function TesourariaPage() {
       categoria: '',
       data: new Date(),
       responsavel: '',
-      congregacao: '',
+      congregacaoId: '',
+      comprovante: '',
+      observacao: '',
     })
     setDialogOpen(true)
   }
@@ -219,33 +322,108 @@ export default function TesourariaPage() {
     }
   }
 
+  // Abre o modal de comprovante
+  const handleAbrirComprovante = (transacao: Transacao) => {
+    setTransacaoComprovante(transacao);
+    setComprovanteOpen(true);
+  }
+
+  // Imprime o comprovante
+  const handleImprimirComprovante = () => {
+    const conteudo = document.getElementById('comprovante-print');
+    if (conteudo) {
+      const janela = window.open('', '_blank');
+      if (janela) {
+        janela.document.write(`
+          <html>
+            <head>
+              <title>Comprovante de Dízimo</title>
+              <style>
+                body {
+                  font-family: 'Courier New', monospace;
+                  font-size: 12px;
+                  width: 80mm;
+                  margin: 0;
+                  padding: 10px;
+                  line-height: 1.2;
+                }
+                .header {
+                  text-align: center;
+                  font-weight: bold;
+                  margin-bottom: 10px;
+                  border-bottom: 1px dashed #000;
+                  padding-bottom: 10px;
+                }
+                .content {
+                  margin: 10px 0;
+                }
+                .row {
+                  display: flex;
+                  justify-content: space-between;
+                  margin: 5px 0;
+                }
+                .footer {
+                  text-align: center;
+                  margin-top: 20px;
+                  border-top: 1px dashed #000;
+                  padding-top: 10px;
+                }
+                @media print {
+                  body { width: 80mm; }
+                }
+              </style>
+            </head>
+            <body>
+              ${conteudo.innerHTML}
+            </body>
+          </html>
+        `);
+        janela.document.close();
+        janela.print();
+      }
+    }
+  }
+
   // Salva o formulário (criação/edição)
   const onSubmit = async (values: FormValues) => {
     try {
+      console.log('Dados do formulário:', values);
+      console.log('Congregação selecionada:', values.congregacaoId);
+      console.log('Congregação atual do usuário:', congregacaoAtual?.id);
+      
+      const dadosTransacao = {
+        ...values,
+        valor: parseFloat(values.valor.toString()),
+        congregacaoId: values.congregacaoId || congregacaoAtual?.id,
+        data: values.data || new Date()
+      };
+      
+      console.log('Congregação final que será salva:', dadosTransacao.congregacaoId);
+      
       if (transacaoParaEditar) {
-        // Atualiza transação existente no Firebase
-        const transacaoRef = doc(db, 'transacoes', transacaoParaEditar.id);
-        await updateDoc(transacaoRef, values);
+        // Atualiza transação existente
+        await updateDoc(doc(db, 'transacoes', transacaoParaEditar.id), dadosTransacao);
         
-        // Atualizar estado local
-        const transacoesAtualizadas = transacoes.map(transacao =>
-          transacao.id === transacaoParaEditar.id
-            ? { ...transacao, ...values }
-            : transacao
-        );
+        // Encontrar o nome da congregação para exibição
+        const congregacaoNome = congregacoes.find(c => c.id === dadosTransacao.congregacaoId)?.nome;
         
-        setTransacoes(transacoesAtualizadas);
+        setTransacoes(transacoes.map(t => 
+          t.id === transacaoParaEditar.id 
+            ? {...dadosTransacao, id: transacaoParaEditar.id, congregacao: congregacaoNome} as Transacao 
+            : t
+        ));
       } else {
-        // Cria nova transação no Firebase
-        const docRef = await addDoc(collection(db, 'transacoes'), values);
+        // Cria nova transação
+        const docRef = await addDoc(collection(db, 'transacoes'), dadosTransacao);
         
-        // Adicionar ao estado local com o ID gerado pelo Firebase
-        const novaTransacao: Transacao = {
+        // Encontrar o nome da congregação para exibição
+        const congregacaoNome = congregacoes.find(c => c.id === dadosTransacao.congregacaoId)?.nome;
+        
+        setTransacoes([...transacoes, {
+          ...dadosTransacao,
           id: docRef.id,
-          ...values
-        };
-        
-        setTransacoes([...transacoes, novaTransacao]);
+          congregacao: congregacaoNome
+        } as Transacao]);
       }
       
       setDialogOpen(false);
@@ -255,29 +433,29 @@ export default function TesourariaPage() {
   }
 
   // Funções para relatórios por congregação
-  const getTransacoesPorCongregacao = (congregacao: string) => {
-    if (congregacao === 'todas') {
+  const getTransacoesPorCongregacao = (congregacaoId: string) => {
+    if (congregacaoId === 'todas') {
       return transacoes;
     }
-    return transacoes.filter(t => t.congregacao === congregacao);
+    return transacoes.filter(t => t.congregacaoId === congregacaoId);
   }
 
-  const getEntradasPorCongregacao = (congregacao: string) => {
-    const transacoesCongregacao = getTransacoesPorCongregacao(congregacao);
+  const getEntradasPorCongregacao = (congregacaoId: string) => {
+    const transacoesCongregacao = getTransacoesPorCongregacao(congregacaoId);
     return transacoesCongregacao
       .filter(t => t.tipo === 'entrada')
       .reduce((sum, t) => sum + t.valor, 0);
   }
 
-  const getSaidasPorCongregacao = (congregacao: string) => {
-    const transacoesCongregacao = getTransacoesPorCongregacao(congregacao);
+  const getSaidasPorCongregacao = (congregacaoId: string) => {
+    const transacoesCongregacao = getTransacoesPorCongregacao(congregacaoId);
     return transacoesCongregacao
       .filter(t => t.tipo === 'saida')
       .reduce((sum, t) => sum + t.valor, 0);
   }
 
-  const getSaldoPorCongregacao = (congregacao: string) => {
-    return getEntradasPorCongregacao(congregacao) - getSaidasPorCongregacao(congregacao);
+  const getSaldoPorCongregacao = (congregacaoId: string) => {
+    return getEntradasPorCongregacao(congregacaoId) - getSaidasPorCongregacao(congregacaoId);
   }
 
   // Filtrar transações por período
@@ -298,16 +476,22 @@ export default function TesourariaPage() {
 
   const transacoesCongregacaoFiltradas = congregacaoSelecionada === 'todas'
     ? filtrarTransacoesPorPeriodo(transacoes)
-    : filtrarTransacoesPorPeriodo(transacoes.filter(t => t.congregacao === congregacaoSelecionada));
+    : filtrarTransacoesPorPeriodo(transacoes.filter(t => t.congregacaoId === congregacaoSelecionada));
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold">Tesouraria</h1>
-        <Button onClick={handleNovaTransacao}>
-          <Plus className="mr-2 h-4 w-4" />
-          Nova Transação
-        </Button>
+        <ProtectedContent
+          permissions={['financas.adicionar']}
+          cargos={['administrador', 'tesoureiro']}
+          anyPermission={true}
+        >
+          <Button onClick={handleNovaTransacao}>
+            <Plus className="mr-2 h-4 w-4" />
+            Nova Transação
+          </Button>
+        </ProtectedContent>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -448,20 +632,45 @@ export default function TesourariaPage() {
                           <TableCell>{transacao.responsavel}</TableCell>
                           <TableCell>{transacao.congregacao || 'Central'}</TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleEditarTransacao(transacao)}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleExcluirTransacao(transacao.id)}
-                            >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              {transacao.categoria === 'Dízimo' && (
+                                <Button
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => handleAbrirComprovante(transacao)}
+                                  title="Imprimir Comprovante"
+                                >
+                                  <Printer className="h-4 w-4 text-blue-600" />
+                                </Button>
+                              )}
+                              <ProtectedContent
+                                permissions={['financas.editar']}
+                                cargos={['administrador', 'tesoureiro']}
+                                anyPermission={true}
+                              >
+                                <Button
+                                  variant="ghost" 
+                                  size="icon" 
+                                  onClick={() => handleEditarTransacao(transacao)}
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                              </ProtectedContent>
+                              <ProtectedContent
+                                permissions={['financas.excluir']}
+                                cargos={['administrador']}
+                                anyPermission={true}
+                              >
+                                <Button
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="text-red-500"
+                                  onClick={() => handleExcluirTransacao(transacao.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </ProtectedContent>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -487,7 +696,7 @@ export default function TesourariaPage() {
                 <SelectContent>
                   <SelectItem value="todas">Todas as Congregações</SelectItem>
                   {congregacoes.map((cong) => (
-                    <SelectItem key={cong.id} value={cong.nome}>{cong.nome}</SelectItem>
+                    <SelectItem key={cong.id} value={cong.id}>{cong.nome}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -525,20 +734,20 @@ export default function TesourariaPage() {
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-gray-600">Entradas:</span>
                         <span className="font-medium text-green-600">
-                          R$ {getEntradasPorCongregacao(cong.nome).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          R$ {getEntradasPorCongregacao(cong.id).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-gray-600">Saídas:</span>
                         <span className="font-medium text-red-600">
-                          R$ {getSaidasPorCongregacao(cong.nome).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          R$ {getSaidasPorCongregacao(cong.id).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="pt-2 border-t">
                         <div className="flex justify-between items-center">
                           <span className="text-sm font-medium">Saldo:</span>
-                          <span className={`font-bold ${getSaldoPorCongregacao(cong.nome) >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                            R$ {getSaldoPorCongregacao(cong.nome).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          <span className={`font-bold ${getSaldoPorCongregacao(cong.id) >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                            R$ {getSaldoPorCongregacao(cong.id).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </span>
                         </div>
                       </div>
@@ -588,7 +797,7 @@ export default function TesourariaPage() {
               
               <Card>
                 <CardHeader>
-                  <CardTitle>Transações de {congregacaoSelecionada}</CardTitle>
+                  <CardTitle>Transações de {congregacoes.find(c => c.id === congregacaoSelecionada)?.nome}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {transacoesCongregacaoFiltradas.length === 0 ? (
@@ -746,7 +955,7 @@ export default function TesourariaPage() {
               
               <FormField
                 control={form.control}
-                name="congregacao"
+                name="congregacaoId"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Congregação</FormLabel>
@@ -762,7 +971,7 @@ export default function TesourariaPage() {
                       </FormControl>
                       <SelectContent>
                         {congregacoes.map((cong) => (
-                          <SelectItem key={cong.id} value={cong.nome}>{cong.nome}</SelectItem>
+                          <SelectItem key={cong.id} value={cong.id}>{cong.nome}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -825,6 +1034,76 @@ export default function TesourariaPage() {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Comprovante */}
+      <Dialog open={comprovanteOpen} onOpenChange={setComprovanteOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Comprovante de Dízimo</DialogTitle>
+            <DialogDescription>
+              Visualize e imprima o comprovante de dízimo.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {transacaoComprovante && (
+            <div id="comprovante-print" className="bg-white p-4 border rounded-lg">
+              <div className="header">
+                <div>COMPROVANTE DE DÍZIMO</div>
+                <div style={{ fontSize: '10px' }}>{config.nome}</div>
+                {config.cnpj && config.cnpj.trim() !== '' && (
+                  <div style={{ fontSize: '9px', marginTop: '2px' }}>
+                    CNPJ: {formatarCNPJ(config.cnpj)}
+                  </div>
+                )}
+              </div>
+              
+              <div className="content">
+                <div className="row">
+                  <span>Data:</span>
+                  <span>{format(transacaoComprovante.data, "dd/MM/yyyy")}</span>
+                </div>
+                <div className="row">
+                  <span>Hora:</span>
+                  <span>{format(transacaoComprovante.data, "HH:mm")}</span>
+                </div>
+                <div className="row">
+                  <span>Responsável:</span>
+                  <span>{transacaoComprovante.responsavel}</span>
+                </div>
+                <div className="row">
+                  <span>Congregação:</span>
+                  <span>{transacaoComprovante.congregacao || 'Central'}</span>
+                </div>
+                <div className="row">
+                  <span>Valor:</span>
+                  <span>R$ {transacaoComprovante.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="row">
+                  <span>Descrição:</span>
+                  <span>{transacaoComprovante.descricao}</span>
+                </div>
+              </div>
+              
+              <div className="footer">
+                <div>Obrigado pela sua fidelidade!</div>
+                <div style={{ fontSize: '10px', marginTop: '5px' }}>
+                  "Trazei todos os dízimos à casa do tesouro..." Ml 3:10
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setComprovanteOpen(false)}>
+              Fechar
+            </Button>
+            <Button onClick={handleImprimirComprovante}>
+              <Printer className="mr-2 h-4 w-4" />
+              Imprimir
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

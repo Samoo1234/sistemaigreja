@@ -44,23 +44,27 @@ import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { db } from '@/lib/firebase/config'
-import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc } from 'firebase/firestore'
+import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, setDoc } from 'firebase/firestore'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useIgrejaConfig } from '@/lib/contexts/igreja-config'
 import Image from 'next/image'
+import { useCongregacoes } from '@/lib/contexts/congregacoes-context'
+import ProtectedRoute from '@/components/auth/protected-route'
+import ProtectedContent from '@/components/auth/protected-content'
 
 // Define o esquema de validação para o formulário
 const formSchema = z.object({
-  nome: z.string().min(3, 'O nome deve ter pelo menos 3 caracteres'),
-  email: z.string().email('Email inválido'),
-  telefone: z.string().min(10, 'O telefone deve ter pelo menos 10 dígitos'),
-  endereco: z.string().min(5, 'O endereço deve ter pelo menos 5 caracteres'),
-  cidade: z.string().min(2, 'A cidade deve ter pelo menos 2 caracteres'),
-  estado: z.string().length(2, 'O estado deve ter 2 caracteres (sigla)'),
+  nome: z.string().min(2, 'Nome é obrigatório'),
+  email: z.string().email('Email inválido').or(z.string().length(0)),
+  telefone: z.string().min(10, 'Telefone deve ter pelo menos 10 dígitos').or(z.string().length(0)),
+  endereco: z.string().min(5, 'Endereço é obrigatório'),
+  cidade: z.string().min(2, 'Cidade é obrigatória'),
+  estado: z.string().min(2, 'Estado é obrigatório'),
   dataNascimento: z.date().optional(),
   dataBatismo: z.date().optional(),
-  congregacao: z.string().min(1, 'Selecione uma congregação'),
+  batismoEspiritoSanto: z.enum(['sim', 'nao']).optional(),
+  congregacaoId: z.string().min(1, 'Congregação é obrigatória'),
   funcao: z.string().optional(),
   status: z.enum(['ativo', 'inativo', 'visitante']),
   avatar: z.string().optional(),
@@ -89,7 +93,9 @@ type Membro = {
   estado: string
   dataNascimento?: Date
   dataBatismo?: Date
-  congregacao: string
+  batismoEspiritoSanto?: 'sim' | 'nao'
+  congregacaoId: string // ID da congregação a que pertence
+  congregacao?: string // Nome da congregação (para exibição)
   funcao?: string
   status: 'ativo' | 'inativo' | 'visitante'
   avatar?: string
@@ -109,6 +115,16 @@ type Carta = {
 }
 
 export default function SecretariaPage() {
+  return (
+    <ProtectedRoute
+      requiredPermissions={['membros.visualizar']}
+    >
+      <SecretariaContent />
+    </ProtectedRoute>
+  )
+}
+
+function SecretariaContent() {
   const [membros, setMembros] = useState<Membro[]>([])
   const [cartas, setCartas] = useState<Carta[]>([])
   const [loading, setLoading] = useState(true)
@@ -124,6 +140,8 @@ export default function SecretariaPage() {
   
   // Obter dados da igreja do contexto
   const { config } = useIgrejaConfig()
+  // Usar o contexto de congregações
+  const { congregacoes, congregacaoAtual } = useCongregacoes()
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -134,7 +152,7 @@ export default function SecretariaPage() {
       endereco: '',
       cidade: '',
       estado: '',
-      congregacao: '',
+      congregacaoId: '',
       funcao: '',
       status: 'ativo',
       avatar: '',
@@ -152,7 +170,7 @@ export default function SecretariaPage() {
   })
 
   // Lista de congregações (em um caso real, seria carregado do Firebase)
-  const congregacoes = [
+  const congregacoesList = [
     { id: '1', nome: 'Congregação Sede' },
     { id: '2', nome: 'Congregação Norte' },
     { id: '3', nome: 'Congregação Sul' },
@@ -187,7 +205,7 @@ export default function SecretariaPage() {
         
         membrosSnapshot.forEach((doc) => {
           const data = doc.data();
-          membrosData.push({
+          const membro = {
             id: doc.id,
             nome: data.nome,
             email: data.email,
@@ -197,11 +215,15 @@ export default function SecretariaPage() {
             estado: data.estado,
             dataNascimento: data.dataNascimento ? new Date(data.dataNascimento.toDate()) : undefined,
             dataBatismo: data.dataBatismo ? new Date(data.dataBatismo.toDate()) : undefined,
-            congregacao: data.congregacao,
+            batismoEspiritoSanto: data.batismoEspiritoSanto,
+            congregacaoId: data.congregacaoId,
+            congregacao: congregacoes.find(c => c.id === data.congregacaoId)?.nome,
             funcao: data.funcao,
             status: data.status,
             avatar: data.avatar
-          });
+          };
+          
+          membrosData.push(membro);
         });
         
         // Buscar cartas do Firebase
@@ -234,22 +256,33 @@ export default function SecretariaPage() {
     };
     
     carregarDados();
-  }, []);
+  }, [congregacoes]);
 
-  // Filtra membros com base na busca e status
+  // Filtra membros com base na busca, status e congregação atual
   const membrosFiltrados = membros.filter(membro => {
     const matchesSearch = membro.nome.toLowerCase().includes(searchQuery.toLowerCase()) ||
       membro.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      membro.congregacao.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (membro.congregacao && membro.congregacao.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (membro.funcao && membro.funcao.toLowerCase().includes(searchQuery.toLowerCase()))
     
     const matchesStatus = filtroStatus === 'todos' || membro.status === filtroStatus
     
-    return matchesSearch && matchesStatus
+    // Filtro por congregação - se não tiver congregação atual ou for admin, mostra todos
+    // Se tiver congregação atual, filtra apenas os membros dessa congregação
+    // Se o membro não tiver congregacaoId definido, mostra para todos (membros antigos)
+    const matchesCongregacao = !congregacaoAtual || 
+                               membro.congregacaoId === congregacaoAtual.id || 
+                               !membro.congregacaoId
+    
+
+    
+    return matchesSearch && matchesStatus && matchesCongregacao
   })
 
   // Organiza membros por nome
   const membrosOrdenados = [...membrosFiltrados].sort((a, b) => a.nome.localeCompare(b.nome))
+
+
 
   // Contagens para estatísticas
   const totalAtivos = membros.filter(m => m.status === 'ativo').length
@@ -269,7 +302,8 @@ export default function SecretariaPage() {
       estado: membro.estado,
       dataNascimento: membro.dataNascimento,
       dataBatismo: membro.dataBatismo,
-      congregacao: membro.congregacao,
+      batismoEspiritoSanto: membro.batismoEspiritoSanto,
+      congregacaoId: membro.congregacaoId,
       funcao: membro.funcao,
       status: membro.status,
       avatar: membro.avatar,
@@ -288,7 +322,10 @@ export default function SecretariaPage() {
       endereco: '',
       cidade: '',
       estado: '',
-      congregacao: '',
+      dataNascimento: undefined,
+      dataBatismo: undefined,
+      batismoEspiritoSanto: undefined,
+      congregacaoId: congregacaoAtual?.id || '',
       funcao: '',
       status: 'ativo',
       avatar: '',
@@ -318,40 +355,38 @@ export default function SecretariaPage() {
         return;
       }
       
+      const dadosMembro = {
+        ...values,
+        avatar: fotoPreview || values.avatar || '',
+        dataCadastro: new Date(),
+        ultimaAtualizacao: new Date()
+      };
+      
       if (membroParaEditar) {
-        // Atualiza membro existente no Firebase
-        const membroRef = doc(db, 'membros', membroParaEditar.id);
-        const membroAtualizado = {
-          ...values,
-          avatar: fotoPreview || membroParaEditar.avatar
-        };
+        // Atualiza membro existente
+        await updateDoc(doc(db, 'membros', membroParaEditar.id), dadosMembro);
         
-        await updateDoc(membroRef, membroAtualizado);
+        // Encontrar o nome da congregação para exibição
+        const congregacaoNome = congregacoes.find(c => c.id === dadosMembro.congregacaoId)?.nome;
         
-        // Atualizar estado local
-        const membrosAtualizados = membros.map(membro =>
-          membro.id === membroParaEditar.id
-            ? { ...membro, ...membroAtualizado }
-            : membro
-        );
-        
-        setMembros(membrosAtualizados);
+        setMembros(membros.map(m => 
+          m.id === membroParaEditar.id 
+            ? {...dadosMembro, id: membroParaEditar.id, congregacao: congregacaoNome} as Membro 
+            : m
+        ));
       } else {
-        // Cria novo membro no Firebase
-        const novoMembroData = {
-          ...values,
-          avatar: fotoPreview || ''
-        };
+        // Cria novo membro
+        const novoDoc = doc(collection(db, 'membros'));
+        await setDoc(novoDoc, dadosMembro);
         
-        const docRef = await addDoc(collection(db, 'membros'), novoMembroData);
+        // Adiciona ao estado local com o nome da congregação para exibição
+        const congregacaoNome = congregacoes.find(c => c.id === dadosMembro.congregacaoId)?.nome;
         
-        // Adicionar ao estado local com o ID gerado pelo Firebase
-        const novoMembro: Membro = {
-          id: docRef.id,
-          ...novoMembroData
-        };
-        
-        setMembros([...membros, novoMembro]);
+        setMembros([...membros, {
+          ...dadosMembro, 
+          id: novoDoc.id,
+          congregacao: congregacaoNome
+        } as Membro]);
       }
       
       setDialogOpen(false);
@@ -451,6 +486,16 @@ export default function SecretariaPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold">Secretaria</h1>
+        <ProtectedContent
+          permissions={['membros.adicionar']}
+          cargos={['administrador', 'secretario', 'pastor']}
+          anyPermission={true}
+        >
+          <Button onClick={handleNovoMembro}>
+            <Plus className="mr-2 h-4 w-4" />
+            Novo Membro
+          </Button>
+        </ProtectedContent>
       </div>
 
       <Tabs defaultValue="membros" className="w-full" onValueChange={(value) => setActiveTab(value as "membros" | "cartas")}>
@@ -471,10 +516,6 @@ export default function SecretariaPage() {
               <h2 className="text-xl font-semibold mb-2">Gestão de Membros</h2>
               <p className="text-muted-foreground">Gerencie os membros da igreja, seus dados e status.</p>
             </div>
-            <Button onClick={handleNovoMembro}>
-              <Plus className="mr-2 h-4 w-4" />
-              Novo Membro
-            </Button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -552,14 +593,6 @@ export default function SecretariaPage() {
               ) : membrosOrdenados.length === 0 ? (
                 <div className="text-center py-8">
                   <p className="text-gray-500">Nenhum membro encontrado.</p>
-                  <Button
-                    variant="outline"
-                    className="mt-4"
-                    onClick={handleNovoMembro}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Adicionar Membro
-                  </Button>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -623,22 +656,35 @@ export default function SecretariaPage() {
                               }
                             </div>
                           </TableCell>
+
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost" 
-                              size="icon"
-                              onClick={() => handleEditarMembro(membro)}
+                            <ProtectedContent
+                              permissions={['membros.editar']}
+                              cargos={['administrador', 'secretario', 'pastor']}
+                              anyPermission={true}
                             >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost" 
-                              size="icon" 
-                              className="text-red-500"
-                              onClick={() => handleExcluirMembro(membro.id)}
+                              <Button
+                                variant="ghost" 
+                                size="icon" 
+                                onClick={() => handleEditarMembro(membro)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            </ProtectedContent>
+                            <ProtectedContent
+                              permissions={['membros.excluir']}
+                              cargos={['administrador']}
+                              anyPermission={true}
                             >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                              <Button
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-red-500"
+                                onClick={() => handleExcluirMembro(membro.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </ProtectedContent>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -899,39 +945,94 @@ export default function SecretariaPage() {
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
                       <FormLabel>Data de Nascimento</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-full pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? (
-                                format(field.value, "PPP", { locale: ptBR })
-                              ) : (
-                                <span>Selecione uma data</span>
-                              )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            initialFocus
-                            defaultMonth={field.value || new Date(1980, 0, 1)}
-                            captionLayout="dropdown"
-                            fromDate={new Date(1900, 0, 1)} 
-                            toDate={new Date()}
-                            disabled={(date) => date > new Date()}
-                          />
-                        </PopoverContent>
-                      </Popover>
+                      <div className="grid grid-cols-3 gap-2">
+                        <FormControl>
+                          <Select
+                            value={field.value ? field.value.getDate().toString() : ""}
+                            onValueChange={(value) => {
+                              if (field.value) {
+                                const newDate = new Date(field.value);
+                                newDate.setDate(parseInt(value));
+                                field.onChange(newDate);
+                              } else {
+                                const newDate = new Date();
+                                newDate.setDate(parseInt(value));
+                                field.onChange(newDate);
+                              }
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Dia" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                                <SelectItem key={day} value={day.toString()}>
+                                  {day.toString().padStart(2, '0')}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        
+                        <FormControl>
+                          <Select
+                            value={field.value ? (field.value.getMonth() + 1).toString() : ""}
+                            onValueChange={(value) => {
+                              if (field.value) {
+                                const newDate = new Date(field.value);
+                                newDate.setMonth(parseInt(value) - 1);
+                                field.onChange(newDate);
+                              } else {
+                                const newDate = new Date();
+                                newDate.setMonth(parseInt(value) - 1);
+                                field.onChange(newDate);
+                              }
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Mês" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[
+                                'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                                'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+                              ].map((month, index) => (
+                                <SelectItem key={index + 1} value={(index + 1).toString()}>
+                                  {month}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        
+                        <FormControl>
+                          <Select
+                            value={field.value ? field.value.getFullYear().toString() : ""}
+                            onValueChange={(value) => {
+                              if (field.value) {
+                                const newDate = new Date(field.value);
+                                newDate.setFullYear(parseInt(value));
+                                field.onChange(newDate);
+                              } else {
+                                const newDate = new Date();
+                                newDate.setFullYear(parseInt(value));
+                                field.onChange(newDate);
+                              }
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Ano" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i).map((year) => (
+                                <SelectItem key={year} value={year.toString()}>
+                                  {year}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -943,49 +1044,145 @@ export default function SecretariaPage() {
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
                       <FormLabel>Data de Batismo</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-full pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? (
-                                format(field.value, "PPP", { locale: ptBR })
-                              ) : (
-                                <span>Selecione uma data</span>
-                              )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            initialFocus
-                            defaultMonth={field.value || new Date(1980, 0, 1)}
-                            captionLayout="dropdown"
-                            fromDate={new Date(1900, 0, 1)} 
-                            toDate={new Date()}
-                            disabled={(date) => date > new Date()}
-                          />
-                        </PopoverContent>
-                      </Popover>
+                      <div className="grid grid-cols-3 gap-2">
+                        <FormControl>
+                          <Select
+                            value={field.value ? field.value.getDate().toString() : ""}
+                            onValueChange={(value) => {
+                              if (field.value) {
+                                const newDate = new Date(field.value);
+                                newDate.setDate(parseInt(value));
+                                field.onChange(newDate);
+                              } else {
+                                const newDate = new Date();
+                                newDate.setDate(parseInt(value));
+                                field.onChange(newDate);
+                              }
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Dia" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                                <SelectItem key={day} value={day.toString()}>
+                                  {day.toString().padStart(2, '0')}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        
+                        <FormControl>
+                          <Select
+                            value={field.value ? (field.value.getMonth() + 1).toString() : ""}
+                            onValueChange={(value) => {
+                              if (field.value) {
+                                const newDate = new Date(field.value);
+                                newDate.setMonth(parseInt(value) - 1);
+                                field.onChange(newDate);
+                              } else {
+                                const newDate = new Date();
+                                newDate.setMonth(parseInt(value) - 1);
+                                field.onChange(newDate);
+                              }
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Mês" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[
+                                'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                                'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+                              ].map((month, index) => (
+                                <SelectItem key={index + 1} value={(index + 1).toString()}>
+                                  {month}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        
+                        <FormControl>
+                          <Select
+                            value={field.value ? field.value.getFullYear().toString() : ""}
+                            onValueChange={(value) => {
+                              if (field.value) {
+                                const newDate = new Date(field.value);
+                                newDate.setFullYear(parseInt(value));
+                                field.onChange(newDate);
+                              } else {
+                                const newDate = new Date();
+                                newDate.setFullYear(parseInt(value));
+                                field.onChange(newDate);
+                              }
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Ano" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i).map((year) => (
+                                <SelectItem key={year} value={year.toString()}>
+                                  {year}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
               </div>
               
+              <FormField
+                control={form.control}
+                name="batismoEspiritoSanto"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Batismo no Espírito Santo?</FormLabel>
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          id="batismo-sim"
+                          name="batismoEspiritoSanto"
+                          value="sim"
+                          checked={field.value === 'sim'}
+                          onChange={(e) => field.onChange(e.target.value)}
+                          className="w-4 h-4 text-primary border-gray-300 focus:ring-primary"
+                        />
+                        <label htmlFor="batismo-sim" className="text-sm font-medium">
+                          Sim
+                        </label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="radio"
+                          id="batismo-nao"
+                          name="batismoEspiritoSanto"
+                          value="nao"
+                          checked={field.value === 'nao'}
+                          onChange={(e) => field.onChange(e.target.value)}
+                          className="w-4 h-4 text-primary border-gray-300 focus:ring-primary"
+                        />
+                        <label htmlFor="batismo-nao" className="text-sm font-medium">
+                          Não
+                        </label>
+                      </div>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
-                  name="congregacao"
+                  name="congregacaoId"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Congregação</FormLabel>
@@ -1001,7 +1198,7 @@ export default function SecretariaPage() {
                         </FormControl>
                         <SelectContent>
                           {congregacoes.map((congregacao) => (
-                            <SelectItem key={congregacao.id} value={congregacao.nome}>
+                            <SelectItem key={congregacao.id} value={congregacao.id}>
                               {congregacao.nome}
                             </SelectItem>
                           ))}

@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { useAuth } from '@/lib/contexts/auth-context';
 import { Permissao, Cargo } from '@/lib/types';
 import { useCongregacoes } from '@/lib/contexts/congregacoes-context';
@@ -30,6 +30,22 @@ export default function PermissionGate({
 }: PermissionGateProps) {
   const { hasPermission, hasAnyPermission, isCargo, userData } = useAuth();
   const { congregacaoAtual } = useCongregacoes();
+
+  // Adiciona log para debugar as permissões
+  useEffect(() => {
+    // Só faz log quando há permissões a verificar e são relacionadas a usuários
+    if (permissions.some(p => p.includes('usuario'))) {
+      console.log('PermissionGate - Permissões necessárias:', permissions);
+      console.log('PermissionGate - Cargo do usuário:', userData?.cargo);
+      console.log('PermissionGate - Cargo é administrador:', isCargo('administrador'));
+      if (permissions.length > 0) {
+        console.log('PermissionGate - Tem qualquer permissão:', hasAnyPermission(permissions));
+        permissions.forEach(perm => {
+          console.log(`PermissionGate - Tem permissão ${perm}:`, hasPermission(perm));
+        });
+      }
+    }
+  }, [permissions, userData, hasPermission, hasAnyPermission, isCargo]);
 
   // Verifica as permissões
   const hasRequiredPermissions = permissions.length > 0

@@ -1,26 +1,154 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permissões para a coleção de configurações
+    // Funções auxiliares para verificar permissões e congregação
+    function getUserData() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function hasPermission(permission) {
+      let userData = getUserData();
+      return permission in userData.permissoes;
+    }
+
+    function userCongregacao() {
+      let userData = getUserData();
+      return userData.congregacaoId;
+    }
+
+    function isSameCongregacao(docCongregacaoId) {
+      return docCongregacaoId == userCongregacao();
+    }
+
+    function isAdministrador() {
+      let userData = getUserData();
+      return userData.cargo == 'administrador';
+    }
+
+    function isPastor() {
+      let userData = getUserData();
+      return userData.cargo == 'pastor';
+    }
+
+    function isSecretario() {
+      let userData = getUserData();
+      return userData.cargo == 'secretario';
+    }
+
+    function isTesoureiro() {
+      let userData = getUserData();
+      return userData.cargo == 'tesoureiro';
+    }
+
+    // Regras para coleção de configurações
     match /configuracoes/{documento} {
       allow read: if true; // Qualquer pessoa pode ler as configurações
-      allow write: if request.auth != null; // Apenas usuários autenticados podem escrever
+      allow write: if request.auth != null && (hasPermission('configuracoes.editar') || isAdministrador());
     }
     
-    // Permissões para a coleção de usuários
+    // Regras para coleção de usuários
     match /usuarios/{userId} {
+      // Usuários podem ler e escrever seus próprios dados
       allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // Administradores podem ler e escrever dados de todos os usuários
+      allow read, write: if request.auth != null && isAdministrador();
+
+      // Pastores podem ler dados de usuários da mesma congregação
+      allow read: if request.auth != null && isPastor() && isSameCongregacao(resource.data.congregacaoId);
     }
     
-    // Permissões para a coleção de membros
+    // Regras para coleção de membros (Secretaria)
     match /membros/{membroId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      // Usuários autorizados podem ler membros da mesma congregação
+      allow read: if request.auth != null && 
+                  (hasPermission('membros.visualizar') || isAdministrador() || isPastor()) && 
+                  (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+      
+      // Usuários autorizados podem criar membros 
+      allow create: if request.auth != null && 
+                   (hasPermission('membros.adicionar') || isAdministrador() || isSecretario()) &&
+                   (isSameCongregacao(request.resource.data.congregacaoId) || isAdministrador());
+                   
+      allow update: if request.auth != null && 
+                   (hasPermission('membros.editar') || isAdministrador() || isSecretario()) &&
+                   (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+                   
+      allow delete: if request.auth != null && 
+                   (hasPermission('membros.excluir') || isAdministrador()) &&
+                   (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+    }
+
+    // Regras para cartas (Secretaria)
+    match /cartas/{cartaId} {
+      allow read: if request.auth != null && 
+                 (hasPermission('membros.visualizar') || isAdministrador() || isSecretario() || isPastor()) &&
+                 (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+      
+      allow create, update: if request.auth != null && 
+                           (hasPermission('membros.editar') || isAdministrador() || isSecretario()) &&
+                           (isSameCongregacao(request.resource.data.congregacaoId) || isAdministrador());
+      
+      allow delete: if request.auth != null && 
+                   (hasPermission('membros.excluir') || isAdministrador() || isSecretario()) &&
+                   (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
     }
     
-    // Permissões para demais coleções
+    // Regras para coleção de congregações
+    match /congregacoes/{congregacaoId} {
+      // Leitura permitida para qualquer usuário autenticado
+      allow read: if request.auth != null;
+      
+      // Escrita permitida apenas para administradores e usuários com permissão específica
+      allow write: if request.auth != null && 
+                  (hasPermission('congregacoes.editar') || isAdministrador());
+    }
+    
+    // Regras para coleção de finanças (Tesouraria)
+    match /financas/{documentoId} {
+      // Usuários autorizados podem ler finanças da mesma congregação
+      allow read: if request.auth != null && 
+                 (hasPermission('financas.visualizar') || isAdministrador() || isPastor() || isTesoureiro()) &&
+                 (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+      
+      // Usuários autorizados podem criar transações
+      allow create: if request.auth != null && 
+                   (hasPermission('financas.adicionar') || isAdministrador() || isTesoureiro()) &&
+                   (isSameCongregacao(request.resource.data.congregacaoId) || isAdministrador());
+                   
+      allow update: if request.auth != null && 
+                   (hasPermission('financas.editar') || isAdministrador() || isTesoureiro()) &&
+                   (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+                   
+      allow delete: if request.auth != null && 
+                   (hasPermission('financas.excluir') || isAdministrador()) &&
+                   (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+    }
+
+    // Regras para transações (Tesouraria)
+    match /transacoes/{transacaoId} {
+      allow read: if request.auth != null && 
+                 (hasPermission('financas.visualizar') || isAdministrador() || isPastor() || isTesoureiro()) &&
+                 (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+      
+      allow create, update: if request.auth != null && 
+                           (hasPermission('financas.adicionar') || isAdministrador() || isTesoureiro()) &&
+                           (isSameCongregacao(request.resource.data.congregacaoId) || isAdministrador());
+      
+      allow delete: if request.auth != null && 
+                   (hasPermission('financas.excluir') || isAdministrador() || isTesoureiro()) &&
+                   (isSameCongregacao(resource.data.congregacaoId) || isAdministrador());
+    }
+    
+    // Regras para coleção de convites
+    match /convites/{conviteId} {
+      allow read, write: if request.auth != null && (isAdministrador() || hasPermission('usuarios.visualizar'));
+    }
+    
+    // Regras para outras coleções
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && isAdministrador();
     }
   }
 } 

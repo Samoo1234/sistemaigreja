@@ -1,9 +1,9 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
 // Variáveis para armazenar as instâncias
 let adminApp;
-let adminDb = null;
+let adminDb: Firestore | null = null;
 
 // Função para processar corretamente a chave privada
 function processPrivateKey(key: string | undefined): string {
@@ -28,16 +28,35 @@ function initializeFirebaseAdmin() {
   }
 
   try {
-    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    // Usar FIREBASE_PROJECT_ID para o servidor (não NEXT_PUBLIC_)
+    const projectId = process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKey = processPrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+    
+    console.log('Tentando inicializar Firebase Admin...');
+    console.log('Project ID:', projectId ? `"${projectId}"` : 'Ausente');
+    console.log('Client Email:', clientEmail ? 'Presente' : 'Ausente');
+    console.log('Private Key:', privateKey ? 'Presente' : 'Ausente');
+    console.log('NODE_ENV:', process.env.NODE_ENV);
     
     if (!projectId || !clientEmail || !privateKey) {
       console.error('Credenciais Firebase Admin incompletas:',
         !projectId ? 'Falta projectId' : '',
         !clientEmail ? 'Falta clientEmail' : '',
         !privateKey ? 'Falta privateKey' : '');
-      return;
+      
+      // Tentar inicializar sem credenciais (para desenvolvimento)
+      console.log('Tentando inicializar sem credenciais...');
+      try {
+        adminApp = initializeApp();
+        adminDb = getFirestore();
+        console.log('Firebase Admin inicializado sem credenciais (modo desenvolvimento)');
+        return;
+      } catch (devError) {
+        console.error('Erro ao inicializar sem credenciais:', devError);
+        adminDb = null;
+        return;
+      }
     }
     
     // Log dos primeiros caracteres da chave para debug (sem expor a chave completa)
@@ -65,8 +84,16 @@ function initializeFirebaseAdmin() {
       console.error('Stack trace:', error.stack);
     }
     
-    // Não vamos lançar o erro, mas deixar adminDb como null para indicar falha
-    adminDb = null;
+    // Tentar inicializar sem credenciais como fallback
+    try {
+      console.log('Tentando fallback sem credenciais...');
+      adminApp = initializeApp();
+      adminDb = getFirestore();
+      console.log('Firebase Admin inicializado em modo fallback');
+    } catch (fallbackError) {
+      console.error('Erro no fallback:', fallbackError);
+      adminDb = null;
+    }
   }
 }
 

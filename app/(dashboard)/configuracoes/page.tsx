@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -15,27 +15,100 @@ import Image from 'next/image'
 import { Church, Upload } from 'lucide-react'
 import EventosHorarios from './eventos-horarios'
 
+// Função para validar CNPJ
+function validarCNPJ(cnpj: string): boolean {
+  // Remove caracteres não numéricos
+  const cnpjLimpo = cnpj.replace(/[^\d]/g, '')
+  
+  // Verifica se tem 14 dígitos
+  if (cnpjLimpo.length !== 14) return false
+  
+  // Verifica se todos os dígitos são iguais
+  if (/^(\d)\1+$/.test(cnpjLimpo)) return false
+  
+  // Validação dos dígitos verificadores
+  let soma = 0
+  let peso = 2
+  
+  // Primeiro dígito verificador
+  for (let i = 11; i >= 0; i--) {
+    soma += parseInt(cnpjLimpo.charAt(i)) * peso
+    peso = peso === 9 ? 2 : peso + 1
+  }
+  
+  let digito = 11 - (soma % 11)
+  if (digito > 9) digito = 0
+  
+  if (parseInt(cnpjLimpo.charAt(12)) !== digito) return false
+  
+  // Segundo dígito verificador
+  soma = 0
+  peso = 2
+  
+  for (let i = 12; i >= 0; i--) {
+    soma += parseInt(cnpjLimpo.charAt(i)) * peso
+    peso = peso === 9 ? 2 : peso + 1
+  }
+  
+  digito = 11 - (soma % 11)
+  if (digito > 9) digito = 0
+  
+  return parseInt(cnpjLimpo.charAt(13)) === digito
+}
+
+// Função para formatar CNPJ
+function formatarCNPJ(cnpj: string): string {
+  const cnpjLimpo = cnpj.replace(/[^\d]/g, '')
+  return cnpjLimpo.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+}
+
 export default function ConfiguracoesPage() {
   const { config, salvarConfig, recarregarConfig } = useIgrejaConfig()
   const [darkMode, setDarkMode] = useState(false)
   const [notificacoes, setNotificacoes] = useState(true)
   const [idiomaApp, setIdiomaApp] = useState("pt-BR")
+  
+  // Estado local que será sincronizado com o contexto
   const [igrejaConfig, setIgrejaConfig] = useState({
-    nome: config.nome,
-    nomeAbreviado: config.nomeAbreviado,
-    logo: config.logo,
-    endereco: config.endereco,
-    cidade: config.cidade,
-    estado: config.estado,
-    cep: config.cep,
-    telefone: config.telefone,
-    email: config.email,
-    site: config.site,
-    corPrimaria: config.corPrimaria,
-    corSecundaria: config.corSecundaria
+    nome: config.nome || '',
+    nomeAbreviado: config.nomeAbreviado || '',
+    logo: config.logo || '',
+    endereco: config.endereco || '',
+    cidade: config.cidade || '',
+    estado: config.estado || '',
+    cep: config.cep || '',
+    telefone: config.telefone || '',
+    email: config.email || '',
+    site: config.site || '',
+    pastor: config.pastor || '',
+    cnpj: config.cnpj || '',
+    corPrimaria: config.corPrimaria || '#000000',
+    corSecundaria: config.corSecundaria || '#000000'
   })
+  
   const [logoPreview, setLogoPreview] = useState<string | null>(config.logo || null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Sincronizar estado local com o contexto quando config mudar
+  useEffect(() => {
+    setIgrejaConfig({
+      nome: config.nome || '',
+      nomeAbreviado: config.nomeAbreviado || '',
+      logo: config.logo || '',
+      endereco: config.endereco || '',
+      cidade: config.cidade || '',
+      estado: config.estado || '',
+      cep: config.cep || '',
+      telefone: config.telefone || '',
+      email: config.email || '',
+      site: config.site || '',
+      pastor: config.pastor || '',
+      cnpj: config.cnpj || '',
+      corPrimaria: config.corPrimaria || '#000000',
+      corSecundaria: config.corSecundaria || '#000000'
+    })
+    setLogoPreview(config.logo || null)
+  }, [config])
 
   const handleToggleDarkMode = () => {
     setDarkMode(!darkMode)
@@ -113,33 +186,77 @@ export default function ConfiguracoesPage() {
       
       console.log('Iniciando salvamento das configurações', igrejaConfig);
       
-      // Salva via API em vez de usar apenas o contexto
+      // Salva diretamente no Firestore
       try {
-        console.log('Enviando dados para API...');
-        // Faz requisição para a API que salva no Firestore
-        const response = await fetch('/api/configuracoes/igreja', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(igrejaConfig),
-          cache: 'no-store'
-        });
+        console.log('Salvando diretamente no Firestore...');
         
-        console.log('Resposta recebida', { status: response.status, statusText: response.statusText });
+        // Importar funções do Firestore
+        const { doc, setDoc } = await import('firebase/firestore');
+        const { db } = await import('@/lib/firebase/config');
         
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => null);
-          console.error('Erro na resposta da API:', {
-            status: response.status,
-            statusText: response.statusText,
-            data: errorData
-          });
-          throw new Error(`Erro ${response.status}: ${errorData?.message || response.statusText}`);
+        // Salvar no Firestore
+        const configRef = doc(db, 'configuracoes', 'igreja');
+        await setDoc(configRef, igrejaConfig, { merge: true });
+        
+        console.log('Configurações salvas no Firestore');
+        
+        // INTEGRAÇÃO: Atualizar a sede nas congregações
+        console.log('Atualizando sede nas congregações...');
+        
+        // Buscar a sede existente
+        const { collection, query, where, getDocs, updateDoc } = await import('firebase/firestore');
+        const congregacoesRef = collection(db, 'congregacoes');
+        const sedeQuery = query(congregacoesRef, where('isMatriz', '==', true));
+        const sedeSnapshot = await getDocs(sedeQuery);
+        
+        if (!sedeSnapshot.empty) {
+          // Atualizar sede existente
+          const sedeDoc = sedeSnapshot.docs[0];
+          const dadosAtualizacao = {
+            nome: igrejaConfig.nome || '',
+            nomeAbreviado: igrejaConfig.nomeAbreviado || '',
+            endereco: igrejaConfig.endereco || '',
+            cidade: igrejaConfig.cidade || '',
+            estado: igrejaConfig.estado || '',
+            telefone: igrejaConfig.telefone || '',
+            email: igrejaConfig.email || '',
+            site: igrejaConfig.site || '',
+            pastor: igrejaConfig.pastor || '',
+            cnpj: igrejaConfig.cnpj || '',
+            // Manter outros campos existentes
+            membros: sedeDoc.data().membros || 0,
+            capacidade: sedeDoc.data().capacidade || 0,
+            status: sedeDoc.data().status || 'ativa',
+            isMatriz: true,
+            dataFundacao: sedeDoc.data().dataFundacao || new Date().toISOString().split('T')[0],
+          };
+          
+          await updateDoc(sedeDoc.ref, dadosAtualizacao);
+          console.log('Sede atualizada com sucesso');
+        } else {
+          // Criar nova sede se não existir
+          const { addDoc } = await import('firebase/firestore');
+          const novaSede = {
+            nome: igrejaConfig.nome || '',
+            nomeAbreviado: igrejaConfig.nomeAbreviado || '',
+            endereco: igrejaConfig.endereco || '',
+            cidade: igrejaConfig.cidade || '',
+            estado: igrejaConfig.estado || '',
+            telefone: igrejaConfig.telefone || '',
+            email: igrejaConfig.email || '',
+            site: igrejaConfig.site || '',
+            pastor: igrejaConfig.pastor || '',
+            cnpj: igrejaConfig.cnpj || '',
+            membros: 0,
+            capacidade: 0,
+            status: 'ativa',
+            isMatriz: true,
+            dataFundacao: new Date().toISOString().split('T')[0],
+          };
+          
+          await addDoc(congregacoesRef, novaSede);
+          console.log('Nova sede criada com sucesso');
         }
-        
-        const data = await response.json();
-        console.log('Resposta da API:', data);
         
         // Salva também no contexto local
         await salvarConfig(igrejaConfig);
@@ -153,7 +270,7 @@ export default function ConfiguracoesPage() {
           description: "As configurações da igreja foram atualizadas com sucesso."
         });
       } catch (error) {
-        console.error('Erro na chamada da API:', error);
+        console.error('Erro ao salvar no Firestore:', error);
         throw error; // Propaga o erro para ser tratado no catch externo
       }
     } catch (error) {
@@ -173,6 +290,94 @@ export default function ConfiguracoesPage() {
       if (btnSalvar) {
         btnSalvar.textContent = 'Salvar Configurações';
         btnSalvar.removeAttribute('disabled');
+      }
+    }
+  };
+
+  const handleSincronizar = async () => {
+    try {
+      // Adiciona estado de carregamento
+      const btnSincronizar = document.getElementById('btn-sincronizar');
+      if (btnSincronizar) {
+        btnSincronizar.textContent = 'Sincronizando...';
+        btnSincronizar.setAttribute('disabled', 'true');
+      }
+      
+      console.log('Iniciando sincronização dos dados da sede...');
+      
+      // Importar funções do Firestore
+      const { collection, query, where, getDocs, doc, setDoc } = await import('firebase/firestore');
+      const { db } = await import('@/lib/firebase/config');
+      
+      // Buscar a sede nas congregações
+      const congregacoesRef = collection(db, 'congregacoes');
+      const sedeQuery = query(congregacoesRef, where('isMatriz', '==', true));
+      const sedeSnapshot = await getDocs(sedeQuery);
+      
+      if (sedeSnapshot.empty) {
+        throw new Error('Nenhuma sede encontrada. Verifique se existe uma congregação marcada como sede.');
+      }
+      
+      const sedeDoc = sedeSnapshot.docs[0];
+      const sedeData = sedeDoc.data();
+      
+      console.log('Dados da sede encontrados:', Object.keys(sedeData));
+      
+      // Preparar dados para configurações (apenas campos que existem na sede)
+      const configData = {
+        nome: sedeData.nome || igrejaConfig.nome,
+        nomeAbreviado: sedeData.nomeAbreviado || igrejaConfig.nomeAbreviado,
+        logo: sedeData.logo || igrejaConfig.logo,
+        endereco: sedeData.endereco || igrejaConfig.endereco,
+        cidade: sedeData.cidade || igrejaConfig.cidade,
+        estado: sedeData.estado || igrejaConfig.estado,
+        cep: sedeData.cep || igrejaConfig.cep,
+        telefone: sedeData.telefone || igrejaConfig.telefone,
+        email: sedeData.email || igrejaConfig.email,
+        site: sedeData.site || igrejaConfig.site,
+        pastor: sedeData.pastor || igrejaConfig.pastor,
+        cnpj: sedeData.cnpj || igrejaConfig.cnpj,
+        // Manter cores atuais das configurações
+        corPrimaria: igrejaConfig.corPrimaria,
+        corSecundaria: igrejaConfig.corSecundaria
+      };
+      
+      console.log('Salvando nas configurações...');
+      
+      // Salvar nas configurações
+      const configRef = doc(db, 'configuracoes', 'igreja');
+      await setDoc(configRef, configData, { merge: true });
+      
+      console.log('Configurações atualizadas com sucesso');
+      
+      // Atualiza o estado local com os dados sincronizados
+      setIgrejaConfig(configData);
+      
+      // Recarrega os dados do Firestore
+      setTimeout(async () => {
+        await recarregarConfig();
+      }, 500);
+      
+      toast("Dados sincronizados", {
+        description: "Os dados da sede foram sincronizados com as configurações."
+      });
+    } catch (error) {
+      console.error('Erro ao sincronizar:', error);
+      let mensagemErro = "Ocorreu um erro ao sincronizar os dados.";
+      
+      if (error instanceof Error) {
+        mensagemErro = `Erro: ${error.message}`;
+      }
+      
+      toast("Erro ao sincronizar", {
+        description: mensagemErro,
+      });
+    } finally {
+      // Reativa o botão
+      const btnSincronizar = document.getElementById('btn-sincronizar');
+      if (btnSincronizar) {
+        btnSincronizar.textContent = 'Sincronizar da Sede';
+        btnSincronizar.removeAttribute('disabled');
       }
     }
   };
@@ -198,7 +403,21 @@ export default function ConfiguracoesPage() {
           <Card>
             <CardHeader>
               <CardTitle>Informações da Igreja</CardTitle>
-              <CardDescription>Configure as informações gerais da sua igreja</CardDescription>
+              <CardDescription>
+                Configure as informações gerais da sua igreja. 
+                <span className="block mt-1 text-sm text-blue-600 font-medium">
+                  💡 Dica: Estas informações serão automaticamente sincronizadas com a sede nas congregações.
+                </span>
+                <span className="block mt-1 text-sm text-orange-600 font-medium">
+                  ⚠️ Se você atualizou os dados pela página de Congregações, use o botão "Sincronizar da Sede" para trazer os dados atualizados.
+                </span>
+                <span className="block mt-1 text-sm text-green-600 font-medium">
+                  ✅ Ao salvar, a sede será atualizada automaticamente (não criará duplicatas).
+                </span>
+                <span className="block mt-1 text-sm text-purple-600 font-medium">
+                  🎨 Cores e configurações visuais são preservadas ao sincronizar.
+                </span>
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="flex flex-col items-center mb-6">
@@ -254,6 +473,36 @@ export default function ConfiguracoesPage() {
                     onChange={handleIgrejaChange} 
                     placeholder="Nome para exibição no sistema" 
                   />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="pastor">Pastor Principal</Label>
+                  <Input 
+                    id="pastor" 
+                    name="pastor" 
+                    value={igrejaConfig.pastor} 
+                    onChange={handleIgrejaChange} 
+                    placeholder="Nome do pastor principal" 
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="cnpj">CNPJ da Igreja</Label>
+                  <Input 
+                    id="cnpj" 
+                    name="cnpj" 
+                    value={igrejaConfig.cnpj} 
+                    onChange={handleIgrejaChange}
+                    placeholder="00.000.000/0000-00" 
+                    maxLength={18}
+                  />
+                  {igrejaConfig.cnpj && igrejaConfig.cnpj.replace(/[^\d]/g, '').length === 14 && (
+                    <div className={`text-xs ${validarCNPJ(igrejaConfig.cnpj) ? 'text-green-600' : 'text-red-600'}`}>
+                      {validarCNPJ(igrejaConfig.cnpj) ? '✓ CNPJ válido' : '✗ CNPJ inválido'}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -376,8 +625,11 @@ export default function ConfiguracoesPage() {
                 </div>
               </div>
             </CardContent>
-            <CardFooter>
+            <CardFooter className="flex gap-2">
               <Button id="btn-salvar-igreja" onClick={handleSalvar}>Salvar Configurações</Button>
+              <Button id="btn-sincronizar" variant="outline" onClick={handleSincronizar}>
+                Sincronizar da Sede
+              </Button>
             </CardFooter>
           </Card>
         </TabsContent>

@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/auth-context';
 import { Permissao, Cargo } from '@/lib/types';
@@ -33,6 +33,13 @@ export default function ProtectedRoute({
   const { isAuthenticated, isLoading, hasPermission, hasAnyPermission, isCargo, userData } = useAuth();
   const router = useRouter();
 
+  // Redirecionar para login se não estiver autenticado
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isLoading, isAuthenticated, router]);
+
   // Se estiver carregando, mostra um indicador de carregamento
   if (isLoading) {
     return (
@@ -45,10 +52,16 @@ export default function ProtectedRoute({
     );
   }
 
-  // Se não estiver autenticado, redireciona para o login
+  // Se não estiver autenticado, mostra loading até o redirecionamento
   if (!isAuthenticated) {
-    router.push('/login');
-    return null;
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-lg">Redirecionando...</p>
+        </div>
+      </div>
+    );
   }
 
   // Se não houver permissões ou cargos obrigatórios e não verificar congregação, 

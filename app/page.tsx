@@ -119,7 +119,7 @@ export default function Home() {
             <Link href="#eventos" className="hover:text-gray-300">Eventos</Link>
             <Link href="#contato" className="hover:text-gray-300">Contato</Link>
             <Link href="/login">
-              <Button variant="outline" className="border-white text-white hover:bg-white hover:text-gray-900">
+              <Button variant="outline" className="border-white text-black hover:bg-white hover:text-gray-900">
                 Acessar Sistema
               </Button>
             </Link>
@@ -147,7 +147,7 @@ export default function Home() {
             </Button>
             <Button 
               variant="outline"
-              className="border-white text-white hover:bg-white hover:text-gray-900"
+              className="border-white text-black hover:bg-white hover:text-gray-900"
               onClick={() => router.push('#contato')}
             >
               Como Chegar
@@ -287,7 +287,7 @@ export default function Home() {
             </p>
             <Button 
               onClick={() => router.push('/login')}
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-blue-600 hover:bg-blue-700 text-black"
             >
               Acessar Sistema
             </Button>

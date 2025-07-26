@@ -14,6 +14,8 @@ export type IgrejaConfig = {
   telefone: string;
   email: string;
   site?: string;
+  pastor?: string;
+  cnpj?: string;
   corPrimaria: string;
   corSecundaria: string;
   horarios?: Array<{
@@ -36,7 +38,8 @@ export type Congregacao = {
   estado: string;
   telefone: string;
   pastor: string;
-  capacidade: number;
+  cnpj?: string;
+  capacidade?: number; // Mantido para compatibilidade com congregações filiais
   dataFundacao?: string;
   membros: number;
   isMatriz: boolean; // Indica se é a congregação matriz/sede

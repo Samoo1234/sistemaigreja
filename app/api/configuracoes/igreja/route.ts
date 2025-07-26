@@ -1,62 +1,23 @@
 import { NextResponse } from 'next/server';
-import { adminDb } from '../../../../lib/firebase/admin';
-import { Firestore } from 'firebase-admin/firestore';
+import { db } from '../../../../lib/firebase/config';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 export const dynamic = 'force-dynamic';
 
-// Verificando se o adminDb está definido
-const firestore = adminDb as Firestore;
-
-// Função auxiliar para log de erros
-function logError(prefix: string, error: unknown) {
-  console.error(`${prefix} - Erro:`, error);
-  if (error instanceof Error) {
-    console.error(`${prefix} - Mensagem:`, error.message);
-    console.error(`${prefix} - Stack:`, error.stack);
-    // Verifica se existe cause no erro (comum em erros do Firebase)
-    if ('cause' in error) {
-      console.error(`${prefix} - Cause:`, (error as any).cause);
-    }
-  }
-}
-
 export async function GET() {
-  console.log('API GET - Iniciando busca de configurações com Admin SDK');
+  console.log('API GET - Iniciando busca de configurações com SDK Cliente');
   
   try {
-    // Verificar se o adminDb foi inicializado corretamente
-    if (!firestore) {
-      console.error('API GET - Admin DB não inicializado - Verificar credenciais Firebase');
-      return NextResponse.json({ 
-        error: 'Serviço indisponível', 
-        details: 'Não foi possível conectar ao Firebase Admin SDK. Verifique as variáveis de ambiente.' 
-      }, { status: 500 });
-    }
-
     console.log('API GET - Obtendo referência do documento');
-    const configRef = firestore.collection('configuracoes').doc('igreja');
+    const configRef = doc(db, 'configuracoes', 'igreja');
     
     console.log('API GET - Buscando documento');
-    const configDoc = await configRef.get();
+    const configDoc = await getDoc(configRef);
     
-    console.log('API GET - Documento encontrado?', configDoc.exists);
+    console.log('API GET - Documento encontrado?', configDoc.exists());
     
-    if (!configDoc.exists) {
-      console.log('API GET - Documento não encontrado - Criando configuração padrão');
-      
-      // Configuração padrão que poderia ser criada se necessário
-      // Comentado para não criar automaticamente
-      /*
-      const configPadrao = {
-        nome: 'Igreja Evangélica Nacional',
-        nomeAbreviado: 'Sistema Igreja',
-        // ... outros campos ...
-      };
-      
-      await configRef.set(configPadrao);
-      return NextResponse.json(configPadrao);
-      */
-      
+    if (!configDoc.exists()) {
+      console.log('API GET - Documento não encontrado');
       return NextResponse.json({ 
         error: 'Configuração não encontrada',
         details: 'O documento de configuração não existe no Firestore.' 
@@ -67,34 +28,25 @@ export async function GET() {
     console.log('API GET - Retornando dados');
     return NextResponse.json(data);
   } catch (error) {
-    logError('API GET', error);
+    console.error('API GET - Erro:', error);
     return NextResponse.json({ 
       error: 'Erro ao buscar configurações',
-      message: error instanceof Error ? error.message : 'Erro desconhecido',
-      stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : null) : undefined
+      message: error instanceof Error ? error.message : 'Erro desconhecido'
     }, { status: 500 });
   }
 }
 
 export async function POST(request: Request) {
-  console.log('API POST - Iniciando salvamento de configurações com Admin SDK');
+  console.log('=== API POST - INÍCIO (SDK Cliente) ===');
   
   try {
-    // Verificar se o adminDb foi inicializado corretamente
-    if (!firestore) {
-      console.error('API POST - Admin DB não inicializado - Verificar credenciais Firebase');
-      return NextResponse.json({ 
-        error: 'Serviço indisponível', 
-        details: 'Não foi possível conectar ao Firebase Admin SDK. Verifique as variáveis de ambiente.' 
-      }, { status: 500 });
-    }
-
     // Verificar se o request body é válido
     let data;
     try {
-      console.log('API POST - Lendo corpo da requisição');
+      console.log('API POST - Lendo corpo da requisição...');
       data = await request.json();
-      console.log('API POST - Dados recebidos');
+      console.log('API POST - Dados recebidos com sucesso');
+      console.log('API POST - Estrutura dos dados:', Object.keys(data));
     } catch (jsonError) {
       console.error('API POST - Erro ao analisar JSON da requisição:', jsonError);
       return NextResponse.json({ 
@@ -112,24 +64,31 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
     
-    console.log('API POST - Obtendo referência do documento');
-    const configRef = firestore.collection('configuracoes').doc('igreja');
+    console.log('API POST - Obtendo referência do documento...');
+    const configRef = doc(db, 'configuracoes', 'igreja');
+    console.log('API POST - Referência obtida');
     
-    console.log('API POST - Salvando documento');
-    await configRef.set(data, { merge: true });
+    console.log('API POST - Salvando configurações da igreja...');
+    await setDoc(configRef, data, { merge: true });
+    console.log('API POST - Configurações salvas com sucesso');
     
-    console.log('API POST - Documento salvo com sucesso');
+    console.log('API POST - Retornando resposta de sucesso');
     return NextResponse.json({ 
       message: 'Configurações atualizadas com sucesso',
       data
     });
+    
   } catch (error) {
-    logError('API POST', error);
+    console.error('=== API POST - ERRO CRÍTICO ===');
+    console.error('API POST - Erro:', error);
+    
+    // Retornar erro mais detalhado
     return NextResponse.json({ 
-      error: 'Erro ao atualizar configurações',
+      error: 'Erro ao salvar configurações',
       message: error instanceof Error ? error.message : 'Erro desconhecido',
-      stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : null) : undefined,
-      details: 'Ocorreu um erro ao tentar salvar as configurações no Firestore.'
+      details: 'Ocorreu um erro interno no servidor ao tentar salvar as configurações.'
     }, { status: 500 });
+  } finally {
+    console.log('=== API POST - FIM ===');
   }
 } 
