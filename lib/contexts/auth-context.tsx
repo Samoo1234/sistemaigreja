@@ -16,6 +16,7 @@ interface AuthContextType {
   hasPermission: (permission: Permissao) => boolean;
   hasAnyPermission: (permissions: Permissao[]) => boolean;
   isCargo: (cargo: Cargo) => boolean;
+  isCargoGeral: () => boolean;
   logout: () => Promise<void>;
 }
 
@@ -101,6 +102,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return userData?.cargo === cargo;
   };
 
+  // Função para verificar se o usuário tem cargo geral (acesso a todas as congregações)
+  const isCargoGeral = (): boolean => {
+    const cargosGerais = ['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral'];
+    return userData?.cargo ? cargosGerais.includes(userData.cargo) : false;
+  };
+
   // Função para fazer logout
   const logout = async (): Promise<void> => {
     try {
@@ -122,6 +129,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         hasPermission,
         hasAnyPermission,
         isCargo,
+        isCargoGeral,
         logout
       }}
     >

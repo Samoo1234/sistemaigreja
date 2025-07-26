@@ -65,9 +65,12 @@ export type Membro = {
 
 // Cargos disponíveis no sistema
 export type Cargo = 
+  | 'super_admin'      // Acesso total absoluto (desenvolvedor)
   | 'administrador'    // Acesso total
   | 'pastor'           // Acesso total à sua congregação
+  | 'secretario_geral' // Acesso à secretaria de todas as congregações
   | 'secretario'       // Acesso à secretaria de sua congregação
+  | 'tesoureiro_geral' // Acesso à tesouraria de todas as congregações
   | 'tesoureiro'       // Acesso à tesouraria de sua congregação
   | 'lider_ministerio' // Acesso a funcionalidades específicas
   | 'usuario';         // Acesso básico
@@ -122,6 +125,15 @@ export type Usuario = {
 
 // Mapeamento de permissões por cargo
 export const permissoesPorCargo: Record<Cargo, Permissao[]> = {
+  super_admin: [
+    'membros.visualizar', 'membros.adicionar', 'membros.editar', 'membros.excluir',
+    'financas.visualizar', 'financas.adicionar', 'financas.editar', 'financas.excluir',
+    'congregacoes.visualizar', 'congregacoes.adicionar', 'congregacoes.editar', 'congregacoes.excluir',
+    'relatorios.visualizar', 'relatorios.gerar',
+    'configuracoes.visualizar', 'configuracoes.editar',
+    'usuarios.visualizar', 'usuarios.adicionar', 'usuarios.editar', 'usuarios.excluir'
+  ],
+  
   administrador: [
     'membros.visualizar', 'membros.adicionar', 'membros.editar', 'membros.excluir',
     'financas.visualizar', 'financas.adicionar', 'financas.editar', 'financas.excluir',
@@ -139,8 +151,18 @@ export const permissoesPorCargo: Record<Cargo, Permissao[]> = {
     'configuracoes.visualizar'
   ],
   
+  secretario_geral: [
+    'membros.visualizar', 'membros.adicionar', 'membros.editar',
+    'relatorios.visualizar', 'relatorios.gerar'
+  ],
+  
   secretario: [
     'membros.visualizar', 'membros.adicionar', 'membros.editar',
+    'relatorios.visualizar', 'relatorios.gerar'
+  ],
+  
+  tesoureiro_geral: [
+    'financas.visualizar', 'financas.adicionar', 'financas.editar',
     'relatorios.visualizar', 'relatorios.gerar'
   ],
   

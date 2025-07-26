@@ -117,7 +117,7 @@ export default function CongregacoesPage() {
   return (
     <ProtectedRoute
       requiredPermissions={['congregacoes.visualizar']}
-      requiredCargos={['administrador', 'pastor']}
+      requiredCargos={['super_admin', 'administrador', 'pastor']}
       anyPermission={true}
     >
       <CongregacoesContent />

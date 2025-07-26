@@ -75,7 +75,11 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       console.log('Cargo do usuário:', userData.cargo);
       console.log('Permissões do usuário:', userData.permissoes);
       console.log('Tem permissão de visualizar usuários:', hasPermission('usuarios.visualizar'));
+      console.log('Tem permissão de visualizar finanças:', hasPermission('financas.visualizar'));
+      console.log('Tem permissão de visualizar membros:', hasPermission('membros.visualizar'));
       console.log('É administrador:', isCargo('administrador'));
+      console.log('É tesoureiro:', isCargo('tesoureiro'));
+      console.log('É tesoureiro geral:', isCargo('tesoureiro_geral'));
     }
   }, [userData, hasPermission, isCargo]);
 
@@ -113,13 +117,25 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
               const Icon = item.icon
               
+              // Debug específico para Tesouraria
+              if (item.name === 'Tesouraria') {
+                console.log('Debug Tesouraria:', {
+                  itemName: item.name,
+                  requiredPermissions: item.requiredPermissions,
+                  hasPermission: item.requiredPermissions.map(p => ({ permission: p, has: hasPermission(p) })),
+                  userCargo: userData?.cargo,
+                  isTesoureiro: isCargo('tesoureiro'),
+                  isTesoureiroGeral: isCargo('tesoureiro_geral')
+                });
+              }
+              
               return (
                 <li key={item.name}>
                   {item.requiredPermissions.length > 0 ? (
                     <PermissionGate
                       permissions={item.requiredPermissions}
                       anyPermission={true}
-                      cargos={['administrador']}
+                      cargos={['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral', 'secretario', 'tesoureiro']}
                     >
                       <Link 
                         href={item.href}
@@ -213,7 +229,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                         <PermissionGate
                           permissions={item.requiredPermissions}
                           anyPermission={true}
-                          cargos={['administrador']}
+                          cargos={['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral', 'secretario', 'tesoureiro']}
                         >
                           <Link 
                             href={item.href}

@@ -170,6 +170,15 @@ function RegistrarPageContent() {
   // Determinar permissões com base no cargo
   const determinarPermissoes = (cargo: string) => {
     switch (cargo.toLowerCase()) {
+      case 'super_admin':
+        return [
+          'membros.visualizar', 'membros.adicionar', 'membros.editar', 'membros.excluir',
+          'financas.visualizar', 'financas.adicionar', 'financas.editar', 'financas.excluir',
+          'congregacoes.visualizar', 'congregacoes.adicionar', 'congregacoes.editar', 'congregacoes.excluir',
+          'relatorios.visualizar', 'relatorios.gerar',
+          'configuracoes.visualizar', 'configuracoes.editar',
+          'usuarios.visualizar', 'usuarios.adicionar', 'usuarios.editar', 'usuarios.excluir'
+        ]
       case 'administrador':
         return [
           'membros.visualizar', 'membros.adicionar', 'membros.editar', 'membros.excluir',
@@ -187,9 +196,19 @@ function RegistrarPageContent() {
           'relatorios.visualizar', 'relatorios.gerar',
           'configuracoes.visualizar'
         ]
+      case 'secretario_geral':
+        return [
+          'membros.visualizar', 'membros.adicionar', 'membros.editar',
+          'relatorios.visualizar', 'relatorios.gerar'
+        ]
       case 'secretario':
         return [
           'membros.visualizar', 'membros.adicionar', 'membros.editar',
+          'relatorios.visualizar', 'relatorios.gerar'
+        ]
+      case 'tesoureiro_geral':
+        return [
+          'financas.visualizar', 'financas.adicionar', 'financas.editar',
           'relatorios.visualizar', 'relatorios.gerar'
         ]
       case 'tesoureiro':

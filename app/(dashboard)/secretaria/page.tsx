@@ -50,6 +50,7 @@ import { cn } from '@/lib/utils'
 import { useIgrejaConfig } from '@/lib/contexts/igreja-config'
 import Image from 'next/image'
 import { useCongregacoes } from '@/lib/contexts/congregacoes-context'
+import { useAuth } from '@/lib/contexts/auth-context'
 import ProtectedRoute from '@/components/auth/protected-route'
 import ProtectedContent from '@/components/auth/protected-content'
 
@@ -118,6 +119,9 @@ export default function SecretariaPage() {
   return (
     <ProtectedRoute
       requiredPermissions={['membros.visualizar']}
+      requiredCargos={['super_admin', 'administrador', 'secretario_geral', 'secretario']}
+      anyPermission={true}
+      checkCongregacao={true}
     >
       <SecretariaContent />
     </ProtectedRoute>
@@ -142,6 +146,8 @@ function SecretariaContent() {
   const { config } = useIgrejaConfig()
   // Usar o contexto de congregações
   const { congregacoes, congregacaoAtual } = useCongregacoes()
+  // Usar o contexto de autenticação
+  const { userData } = useAuth()
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -168,6 +174,30 @@ function SecretariaContent() {
       membroId: '',
     }
   })
+
+  // Função para obter congregações disponíveis baseada no cargo do usuário
+  const getCongregacoesDisponiveis = () => {
+    // Se for secretário local, mostrar apenas sua congregação
+    if (userData?.cargo === 'secretario' && userData?.congregacaoId) {
+      const congregacaoUsuario = congregacoes.find(c => c.id === userData.congregacaoId);
+      return congregacaoUsuario ? [congregacaoUsuario] : [];
+    }
+    
+    // Se for secretário geral, administrador ou super_admin, mostrar todas
+    if (['secretario_geral', 'administrador', 'super_admin'].includes(userData?.cargo || '')) {
+      return congregacoes;
+    }
+    
+    // Para outros cargos, mostrar apenas a congregação do usuário
+    if (userData?.congregacaoId) {
+      const congregacaoUsuario = congregacoes.find(c => c.id === userData.congregacaoId);
+      return congregacaoUsuario ? [congregacaoUsuario] : [];
+    }
+    
+    return [];
+  };
+
+  const congregacoesDisponiveis = getCongregacoesDisponiveis();
 
   // Lista de congregações (em um caso real, seria carregado do Firebase)
   const congregacoesList = [
@@ -246,7 +276,27 @@ function SecretariaContent() {
           });
         });
         
-        setMembros(membrosData);
+        // Filtrar membros baseado no cargo do usuário
+        let membrosFiltrados = membrosData;
+        
+        // Se for secretário local, filtrar apenas membros da sua congregação
+        if (userData?.cargo === 'secretario' && userData?.congregacaoId) {
+          membrosFiltrados = membrosData.filter(m => m.congregacaoId === userData.congregacaoId);
+          console.log('Secretário local - Filtrando membros da congregação:', userData.congregacaoId);
+        }
+        
+        // Se for secretário geral, administrador ou super_admin, ver todos os membros
+        if (['secretario_geral', 'administrador', 'super_admin'].includes(userData?.cargo || '')) {
+          membrosFiltrados = membrosData;
+          console.log('Cargo geral - Vendo todos os membros');
+        }
+        
+        console.log('Membros carregados:', membrosData.length);
+        console.log('Membros filtrados:', membrosFiltrados.length);
+        console.log('Cargo do usuário:', userData?.cargo);
+        console.log('Congregação do usuário:', userData?.congregacaoId);
+        
+        setMembros(membrosFiltrados);
         setCartas(cartasData);
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
@@ -256,7 +306,7 @@ function SecretariaContent() {
     };
     
     carregarDados();
-  }, [congregacoes]);
+  }, [congregacoes, userData]);
 
   // Filtra membros com base na busca, status e congregação atual
   const membrosFiltrados = membros.filter(membro => {
@@ -315,6 +365,13 @@ function SecretariaContent() {
   const handleNovoMembro = () => {
     setMembroParaEditar(null)
     setFotoPreview(null)
+    
+    // Se for secretário local, definir automaticamente a congregação
+    let congregacaoPadrao = congregacaoAtual?.id || '';
+    if (userData?.cargo === 'secretario' && userData?.congregacaoId) {
+      congregacaoPadrao = userData.congregacaoId;
+    }
+    
     form.reset({
       nome: '',
       email: '',
@@ -325,7 +382,7 @@ function SecretariaContent() {
       dataNascimento: undefined,
       dataBatismo: undefined,
       batismoEspiritoSanto: undefined,
-      congregacaoId: congregacaoAtual?.id || '',
+      congregacaoId: congregacaoPadrao,
       funcao: '',
       status: 'ativo',
       avatar: '',
@@ -1197,7 +1254,7 @@ function SecretariaContent() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {congregacoes.map((congregacao) => (
+                          {congregacoesDisponiveis.map((congregacao) => (
                             <SelectItem key={congregacao.id} value={congregacao.id}>
                               {congregacao.nome}
                             </SelectItem>

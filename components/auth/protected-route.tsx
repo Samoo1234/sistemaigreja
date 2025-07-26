@@ -81,14 +81,26 @@ export default function ProtectedRoute({
   // Verifica a congregação se necessário
   let hasCongregacaoAccess = true;
   if (checkCongregacao && congregacaoId && userData) {
-    // Administradores têm acesso a todas as congregações
-    if (userData.cargo === 'administrador') {
+    // Cargos que têm acesso a todas as congregações
+    const cargosGerais = ['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral'];
+    if (userData.cargo && cargosGerais.includes(userData.cargo)) {
       hasCongregacaoAccess = true;
     } else {
       // Para outros usuários, verifica se a congregação corresponde
       hasCongregacaoAccess = userData.congregacaoId === congregacaoId;
     }
+  } else if (checkCongregacao && !congregacaoId && userData) {
+    // Se não foi especificado uma congregação, permite acesso (será filtrado no conteúdo)
+    const cargosGerais = ['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral'];
+    if (userData.cargo && cargosGerais.includes(userData.cargo)) {
+      hasCongregacaoAccess = true;
+    } else {
+      // Para cargos locais, permite acesso mas será filtrado no conteúdo
+      hasCongregacaoAccess = true;
+    }
   }
+
+
 
   // Se não tiver as permissões necessárias, mostra uma mensagem de acesso negado
   if (!hasRequiredPermissions || !hasRequiredCargo || !hasCongregacaoAccess) {

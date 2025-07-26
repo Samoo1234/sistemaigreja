@@ -20,9 +20,14 @@ service cloud.firestore {
       return docCongregacaoId == userCongregacao();
     }
 
+    function isSuperAdmin() {
+      let userData = getUserData();
+      return userData.cargo == 'super_admin';
+    }
+
     function isAdministrador() {
       let userData = getUserData();
-      return userData.cargo == 'administrador';
+      return userData.cargo == 'administrador' || userData.cargo == 'super_admin';
     }
 
     function isPastor() {
@@ -30,14 +35,24 @@ service cloud.firestore {
       return userData.cargo == 'pastor';
     }
 
+    function isSecretarioGeral() {
+      let userData = getUserData();
+      return userData.cargo == 'secretario_geral';
+    }
+
     function isSecretario() {
       let userData = getUserData();
-      return userData.cargo == 'secretario';
+      return userData.cargo == 'secretario' || userData.cargo == 'secretario_geral';
+    }
+
+    function isTesoureiroGeral() {
+      let userData = getUserData();
+      return userData.cargo == 'tesoureiro_geral';
     }
 
     function isTesoureiro() {
       let userData = getUserData();
-      return userData.cargo == 'tesoureiro';
+      return userData.cargo == 'tesoureiro' || userData.cargo == 'tesoureiro_geral';
     }
 
     // Regras para coleção de configurações

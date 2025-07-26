@@ -54,6 +54,7 @@ import { db } from '@/lib/firebase/config'
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc } from 'firebase/firestore'
 import { useCongregacoes } from '@/lib/contexts/congregacoes-context'
 import { useIgrejaConfig } from '@/lib/contexts/igreja-config'
+import { useAuth } from '@/lib/contexts/auth-context'
 import ProtectedRoute from '@/components/auth/protected-route'
 import ProtectedContent from '@/components/auth/protected-content'
 
@@ -138,6 +139,9 @@ export default function TesourariaPage() {
   return (
     <ProtectedRoute
       requiredPermissions={['financas.visualizar']}
+      requiredCargos={['super_admin', 'administrador', 'tesoureiro_geral', 'tesoureiro']}
+      anyPermission={true}
+      checkCongregacao={true}
     >
       <TesourariaContent />
     </ProtectedRoute>
@@ -160,6 +164,7 @@ function TesourariaContent() {
   // Usar o contexto de congregações e configurações da igreja
   const { congregacoes, congregacaoAtual } = useCongregacoes()
   const { config } = useIgrejaConfig()
+  const { userData } = useAuth()
   
 
 
@@ -219,7 +224,27 @@ function TesourariaContent() {
           });
         });
         
-        setTransacoes(transacoesData);
+        // Filtrar transações baseado no cargo do usuário
+        let transacoesFiltradas = transacoesData;
+        
+        // Se for tesoureiro local, filtrar apenas transações da sua congregação
+        if (userData?.cargo === 'tesoureiro' && userData?.congregacaoId) {
+          transacoesFiltradas = transacoesData.filter(t => t.congregacaoId === userData.congregacaoId);
+          console.log('Tesoureiro local - Filtrando transações da congregação:', userData.congregacaoId);
+        }
+        
+        // Se for tesoureiro geral, administrador ou super_admin, ver todas as transações
+        if (['tesoureiro_geral', 'administrador', 'super_admin'].includes(userData?.cargo || '')) {
+          transacoesFiltradas = transacoesData;
+          console.log('Cargo geral - Vendo todas as transações');
+        }
+        
+        console.log('Transações carregadas:', transacoesData.length);
+        console.log('Transações filtradas:', transacoesFiltradas.length);
+        console.log('Cargo do usuário:', userData?.cargo);
+        console.log('Congregação do usuário:', userData?.congregacaoId);
+        
+        setTransacoes(transacoesFiltradas);
       } catch (error) {
         console.error("Erro ao carregar transações:", error);
         setTransacoes(mockTransacoes); // Fallback para dados de exemplo
@@ -229,9 +254,33 @@ function TesourariaContent() {
     };
     
     carregarTransacoes();
-  }, [congregacoes]);
+  }, [congregacoes, userData]);
 
-  // Lista de congregações
+  // Função para obter congregações disponíveis baseada no cargo do usuário
+  const getCongregacoesDisponiveis = () => {
+    // Se for tesoureiro local, mostrar apenas sua congregação
+    if (userData?.cargo === 'tesoureiro' && userData?.congregacaoId) {
+      const congregacaoUsuario = congregacoes.find(c => c.id === userData.congregacaoId);
+      return congregacaoUsuario ? [congregacaoUsuario] : [];
+    }
+    
+    // Se for tesoureiro geral, administrador ou super_admin, mostrar todas
+    if (['tesoureiro_geral', 'administrador', 'super_admin'].includes(userData?.cargo || '')) {
+      return congregacoes;
+    }
+    
+    // Para outros cargos, mostrar apenas a congregação do usuário
+    if (userData?.congregacaoId) {
+      const congregacaoUsuario = congregacoes.find(c => c.id === userData.congregacaoId);
+      return congregacaoUsuario ? [congregacaoUsuario] : [];
+    }
+    
+    return [];
+  };
+
+  const congregacoesDisponiveis = getCongregacoesDisponiveis();
+
+  // Lista de congregações (mantida para compatibilidade)
   const congregacoesList = [
     { id: '1', nome: 'Congregação Sede' },
     { id: '2', nome: 'Congregação Norte' },
@@ -295,6 +344,13 @@ function TesourariaContent() {
   // Abre o diálogo para criar nova transação
   const handleNovaTransacao = () => {
     setTransacaoParaEditar(null)
+    
+    // Se for tesoureiro local, definir automaticamente a congregação
+    let congregacaoPadrao = '';
+    if (userData?.cargo === 'tesoureiro' && userData?.congregacaoId) {
+      congregacaoPadrao = userData.congregacaoId;
+    }
+    
     form.reset({
       descricao: '',
       valor: 0,
@@ -302,7 +358,7 @@ function TesourariaContent() {
       categoria: '',
       data: new Date(),
       responsavel: '',
-      congregacaoId: '',
+      congregacaoId: congregacaoPadrao,
       comprovante: '',
       observacao: '',
     })
@@ -695,7 +751,7 @@ function TesourariaContent() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todas">Todas as Congregações</SelectItem>
-                  {congregacoes.map((cong) => (
+                  {congregacoesDisponiveis.map((cong) => (
                     <SelectItem key={cong.id} value={cong.id}>{cong.nome}</SelectItem>
                   ))}
                 </SelectContent>
@@ -970,7 +1026,7 @@ function TesourariaContent() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {congregacoes.map((cong) => (
+                        {congregacoesDisponiveis.map((cong) => (
                           <SelectItem key={cong.id} value={cong.id}>{cong.nome}</SelectItem>
                         ))}
                       </SelectContent>

@@ -40,15 +40,18 @@ import {
   UserCheck,
   UserMinus,
   Church,
-  Key
+  Key,
+  FileText,
+  Coins
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
-import { collection, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore'
-import { db } from '@/lib/firebase/config'
+import { collection, getDocs, deleteDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
+import { createUserWithEmailAndPassword } from 'firebase/auth'
+import { db, auth } from '@/lib/firebase/config'
 import { useAuth } from '@/lib/contexts/auth-context'
 import { useCongregacoes } from '@/lib/contexts/congregacoes-context'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -58,6 +61,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Alert, AlertDescription, AlertTitle } from "../../../components/ui/alert"
 import ProtectedRoute from '@/components/auth/protected-route'
 import ProtectedContent from '@/components/auth/protected-content'
+import { toast } from 'sonner'
 
 // Tipo para os convites
 type Convite = {
@@ -75,10 +79,11 @@ type Convite = {
   criadoPorNome?: string;
 }
 
-// Define o esquema de validação para o formulário de convite
+// Define o esquema de validação para o formulário de cadastro
 const formSchema = z.object({
   nome: z.string().min(2, 'Nome é obrigatório'),
   email: z.string().email('Email inválido'),
+  senha: z.string().optional(),
   cargo: z.string().min(1, 'Cargo é obrigatório'),
   congregacaoId: z.string().min(1, 'Congregação é obrigatória'),
 })
@@ -103,7 +108,7 @@ export default function UsuariosPage() {
   return (
     <ProtectedRoute
       requiredPermissions={['usuarios.visualizar']}
-      requiredCargos={['administrador']}
+      requiredCargos={['super_admin', 'administrador']}
       anyPermission={true}
     >
       <UsuariosContent />
@@ -122,6 +127,7 @@ function UsuariosContent() {
   const [enviandoConvite, setEnviandoConvite] = useState(false)
   const [sucessoConvite, setSucessoConvite] = useState(false)
   const [erroConvite, setErroConvite] = useState<string | null>(null)
+  const [usuarioParaEditar, setUsuarioParaEditar] = useState<Usuario | null>(null)
   
   // Obter dados de autenticação e congregações dos contextos
   const { user, userData } = useAuth()
@@ -129,13 +135,17 @@ function UsuariosContent() {
   
   useEffect(() => {
     console.log('Congregações disponíveis no contexto:', congregacoes);
-  }, [congregacoes]);
+    console.log('Usuário logado:', userData);
+    console.log('Cargo do usuário logado:', userData?.cargo);
+    console.log('Permissões do usuário logado:', userData?.permissoes);
+  }, [congregacoes, userData]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       nome: '',
       email: '',
+      senha: '',
       cargo: 'usuario',
       congregacaoId: userData?.congregacaoId || '',
     }
@@ -229,8 +239,9 @@ function UsuariosContent() {
     return b.dataCriacao.getTime() - a.dataCriacao.getTime()
   })
 
-  // Abre o diálogo para enviar convite
-  const handleNovoConvite = () => {
+  // Abre o diálogo para cadastrar novo usuário
+  const handleNovoUsuario = () => {
+    setUsuarioParaEditar(null)
     setSucessoConvite(false)
     setErroConvite(null)
     
@@ -244,80 +255,123 @@ function UsuariosContent() {
     form.reset({
       nome: '',
       email: '',
+      senha: '',
       cargo: 'usuario',
       congregacaoId: defaultCongregacaoId,
     })
     setDialogOpen(true)
   }
 
-  // Envia convite por email
+  // Cadastra novo usuário ou edita usuário existente
   const onSubmit = async (values: FormValues) => {
     setEnviandoConvite(true)
     setSucessoConvite(false)
     setErroConvite(null)
     
     try {
-      // Encontrar a congregação selecionada para obter o nome
-      let congregacao = "matriz";
+      // Se estiver editando, não verificar email duplicado
+      if (!usuarioParaEditar) {
+        // Verificar se o email já existe apenas para novos usuários
+        const usuariosRef = collection(db, 'usuarios')
+        const usuariosSnapshot = await getDocs(usuariosRef)
+        const emailExiste = usuariosSnapshot.docs.some(doc => doc.data().email === values.email)
+        
+        if (emailExiste) {
+          throw new Error('Este email já está cadastrado no sistema')
+        }
+      }
+
+      // Encontrar a congregação selecionada
+      let congregacaoId = "matriz";
       let congregacaoNome = "Congregação Matriz";
       
-      // Se existirem congregações e uma foi selecionada (diferente de "default")
       if (values.congregacaoId !== "default" && congregacoes.length > 0) {
         const congregacaoSelecionada = congregacoes.find(c => c.id === values.congregacaoId);
         if (congregacaoSelecionada) {
-          congregacao = congregacaoSelecionada.id;
+          congregacaoId = congregacaoSelecionada.id;
           congregacaoNome = congregacaoSelecionada.nome;
         }
       }
-      
-      // Mapeamento correto dos parâmetros para o modelo esperado pela API
-      const response = await fetch('/api/convites', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          email: values.email,
+
+      if (usuarioParaEditar) {
+        // EDITAR USUÁRIO EXISTENTE
+        const permissoes = permissoesPorCargo[values.cargo as Cargo] || permissoesPorCargo['usuario']
+        
+        // Atualizar documento no Firestore
+        await updateDoc(doc(db, 'usuarios', usuarioParaEditar.id), {
           nome: values.nome,
-          perfil: values.cargo,
-          congregacao: congregacao,
-          congregacaoNome: congregacaoNome,
-          criadoPorId: user?.uid,
-          criadoPorNome: userData?.nome
+          email: values.email,
+          cargo: values.cargo as Cargo,
+          congregacaoId: congregacaoId,
+          permissoes: permissoes,
+          ultimaAtualizacao: new Date()
         })
-      })
 
-      const data = await response.json()
+        // Atualizar estado local
+        setUsuarios(usuarios.map(u => 
+          u.id === usuarioParaEditar.id 
+            ? { ...u, nome: values.nome, email: values.email, cargo: values.cargo as Cargo, congregacaoId: congregacaoId, congregacao: congregacaoNome, permissoes }
+            : u
+        ))
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro ao enviar convite')
+        toast.success('Usuário atualizado com sucesso!')
+      } else {
+        // CRIAR NOVO USUÁRIO
+        // Criar usuário no Firebase Auth
+        if (!values.senha) {
+          throw new Error('Senha é obrigatória para novos usuários')
+        }
+        
+        const userCredential = await createUserWithEmailAndPassword(
+          auth,
+          values.email,
+          values.senha
+        )
+
+        // Obter permissões baseadas no cargo
+        const permissoes = permissoesPorCargo[values.cargo as Cargo] || permissoesPorCargo['usuario']
+
+        // Criar documento do usuário no Firestore
+        const userData = {
+          nome: values.nome,
+          email: values.email,
+          cargo: values.cargo as Cargo,
+          congregacaoId: congregacaoId,
+          permissoes: permissoes,
+          dataCadastro: new Date(),
+          ultimoAcesso: new Date(),
+          status: 'ativo' as const
+        }
+
+        await setDoc(doc(db, 'usuarios', userCredential.user.uid), userData)
+
+        // Adicionar o novo usuário à lista
+        const novoUsuario: Usuario = {
+          id: userCredential.user.uid,
+          nome: values.nome,
+          email: values.email,
+          cargo: values.cargo as Cargo,
+          congregacaoId: congregacaoId,
+          congregacao: congregacaoNome,
+          permissoes: permissoes,
+          dataCadastro: new Date(),
+          ultimoAcesso: new Date(),
+          status: 'ativo'
+        }
+
+        setUsuarios([...usuarios, novoUsuario])
+        setSucessoConvite(true)
       }
 
-      // Adicionar o novo convite à lista, convertendo os nomes de campo
-      // para o formato usado pelo frontend
-      setConvites([...convites, {
-        id: data.id,
-        email: data.email,
-        nome: data.nome,
-        cargo: data.perfil,
-        congregacaoId: data.congregacao,
-        token: data.token,
-        status: data.status,
-        dataCriacao: new Date(data.dataCriacao),
-        dataExpiracao: new Date(data.dataExpiracao),
-        criadoPor: data.criadoPorNome || userData?.nome || 'Sistema',
-        criadoPorId: data.criadoPorId || user?.uid,
-        criadoPorNome: data.criadoPorNome || userData?.nome
-      }])
-
-      setSucessoConvite(true)
+      // Fechar diálogo
       setTimeout(() => {
         setDialogOpen(false)
         setSucessoConvite(false)
+        setUsuarioParaEditar(null)
       }, 3000)
     } catch (error) {
-      console.error('Erro ao enviar convite:', error)
-      setErroConvite(error instanceof Error ? error.message : 'Erro ao enviar convite')
+      console.error('Erro ao cadastrar usuário:', error)
+      setErroConvite(error instanceof Error ? error.message : 'Erro ao cadastrar usuário')
     } finally {
       setEnviandoConvite(false)
     }
@@ -337,18 +391,98 @@ function UsuariosContent() {
     }
   }
 
+  // Editar usuário
+  const handleEditarUsuario = (usuario: Usuario) => {
+    setUsuarioParaEditar(usuario)
+    form.reset({
+      nome: usuario.nome,
+      email: usuario.email,
+      cargo: usuario.cargo,
+      congregacaoId: usuario.congregacaoId,
+      senha: '', // Não preenchemos a senha na edição
+    })
+    setDialogOpen(true)
+  }
+
+  // Alterar status do usuário (ativar/desativar)
+  const handleAlterarStatusUsuario = async (usuario: Usuario) => {
+    try {
+      const novoStatus = usuario.status === 'ativo' ? 'inativo' : 'ativo'
+      
+      // Atualizar no Firestore
+      await updateDoc(doc(db, 'usuarios', usuario.id), {
+        status: novoStatus,
+        ultimaAtualizacao: new Date()
+      })
+      
+      // Atualizar estado local
+      setUsuarios(usuarios.map(u => 
+        u.id === usuario.id 
+          ? { ...u, status: novoStatus }
+          : u
+      ))
+      
+      toast.success(`Usuário ${novoStatus === 'ativo' ? 'ativado' : 'desativado'} com sucesso!`)
+    } catch (error) {
+      console.error('Erro ao alterar status do usuário:', error)
+      toast.error('Erro ao alterar status do usuário')
+    }
+  }
+
+  // Excluir usuário
+  const handleExcluirUsuario = async (usuario: Usuario) => {
+    if (!confirm(`Tem certeza que deseja excluir o usuário ${usuario.nome}? Esta ação não pode ser desfeita.`)) {
+      return
+    }
+
+    try {
+      // Excluir do Firestore
+      await deleteDoc(doc(db, 'usuarios', usuario.id))
+      
+      // Remover da lista local
+      setUsuarios(usuarios.filter(u => u.id !== usuario.id))
+      
+      toast.success('Usuário excluído com sucesso!')
+    } catch (error) {
+      console.error('Erro ao excluir usuário:', error)
+      toast.error('Erro ao excluir usuário')
+    }
+  }
+
+  // Redefinir senha do usuário
+  const handleRedefinirSenha = async (usuario: Usuario) => {
+    if (!confirm(`Deseja redefinir a senha do usuário ${usuario.nome}?`)) {
+      return
+    }
+
+    try {
+      // Gerar nova senha aleatória
+      const novaSenha = Math.random().toString(36).slice(-8)
+      
+      // Atualizar senha no Firebase Auth
+      // Nota: Isso requer privilégios de admin no Firebase
+      // Por enquanto, vamos apenas mostrar a nova senha
+      
+      toast.success(`Nova senha gerada: ${novaSenha}`)
+      console.log('Nova senha para', usuario.email, ':', novaSenha)
+    } catch (error) {
+      console.error('Erro ao redefinir senha:', error)
+      toast.error('Erro ao redefinir senha')
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold">Gerenciamento de Usuários</h1>
         <ProtectedContent
           permissions={['usuarios.adicionar']}
-          cargos={['administrador']}
+          cargos={['super_admin', 'administrador']}
           anyPermission={true}
         >
-          <Button onClick={handleNovoConvite}>
+          <Button onClick={handleNovoUsuario}>
             <Plus className="mr-2 h-4 w-4" />
-            Convidar Usuário
+            Cadastrar Usuário
           </Button>
         </ProtectedContent>
       </div>
@@ -361,7 +495,7 @@ function UsuariosContent() {
           </TabsTrigger>
           <TabsTrigger value="convites" className="flex items-center">
             <Mail className="mr-2 h-4 w-4" />
-            Convites
+            Histórico de Convites
           </TabsTrigger>
         </TabsList>
         
@@ -434,10 +568,10 @@ function UsuariosContent() {
                   <Button
                     variant="outline"
                     className="mt-4"
-                    onClick={handleNovoConvite}
+                    onClick={handleNovoUsuario}
                   >
                     <Plus className="mr-2 h-4 w-4" />
-                    Convidar Usuário
+                    Cadastrar Usuário
                   </Button>
                 </div>
               ) : (
@@ -468,14 +602,20 @@ function UsuariosContent() {
                           <TableCell>{usuario.email}</TableCell>
                           <TableCell>
                             <div className="flex items-center">
-                              {usuario.cargo === 'administrador' ? (
+                              {usuario.cargo === 'super_admin' ? (
+                                <Shield className="mr-1 h-4 w-4 text-red-600" />
+                              ) : usuario.cargo === 'administrador' ? (
                                 <Shield className="mr-1 h-4 w-4 text-primary" />
                               ) : usuario.cargo === 'pastor' ? (
                                 <Church className="mr-1 h-4 w-4 text-emerald-600" />
+                              ) : usuario.cargo === 'secretario_geral' ? (
+                                <FileText className="mr-1 h-4 w-4 text-blue-600" />
+                              ) : usuario.cargo === 'tesoureiro_geral' ? (
+                                <Coins className="mr-1 h-4 w-4 text-yellow-600" />
                               ) : (
                                 <UserIcon className="mr-1 h-4 w-4 text-gray-500" />
                               )}
-                              <span className="capitalize">{usuario.cargo}</span>
+                              <span className="capitalize">{usuario.cargo.replace('_', ' ')}</span>
                             </div>
                           </TableCell>
                           <TableCell>{usuario.congregacao || 'Matriz'}</TableCell>
@@ -495,41 +635,73 @@ function UsuariosContent() {
                             {format(usuario.ultimoAcesso, "dd/MM/yy HH:mm")}
                           </TableCell>
                           <TableCell className="text-right">
-                            <ProtectedContent
-                              permissions={['usuarios.editar']}
-                              cargos={['administrador']}
-                              anyPermission={true}
-                            >
-                              <Button
-                                variant="ghost" 
-                                size="icon"
+                            <div className="flex justify-end space-x-1">
+                              <ProtectedContent
+                                permissions={['usuarios.editar']}
+                                cargos={['super_admin', 'administrador']}
+                                anyPermission={true}
                               >
-                                <Key className="h-4 w-4" />
-                              </Button>
-                            </ProtectedContent>
-                            <ProtectedContent
-                              permissions={['usuarios.editar']}
-                              cargos={['administrador']}
-                              anyPermission={true}
-                            >
-                              {usuario.status === 'ativo' ? (
+                                <Button
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => handleEditarUsuario(usuario)}
+                                  title="Editar usuário"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                              </ProtectedContent>
+                              
+                              <ProtectedContent
+                                permissions={['usuarios.editar']}
+                                cargos={['super_admin', 'administrador']}
+                                anyPermission={true}
+                              >
+                                <Button
+                                  variant="ghost" 
+                                  size="icon"
+                                  onClick={() => handleRedefinirSenha(usuario)}
+                                  title="Redefinir senha"
+                                >
+                                  <Key className="h-4 w-4" />
+                                </Button>
+                              </ProtectedContent>
+                              
+                              <ProtectedContent
+                                permissions={['usuarios.editar']}
+                                cargos={['super_admin', 'administrador']}
+                                anyPermission={true}
+                              >
                                 <Button
                                   variant="ghost" 
                                   size="icon" 
-                                  className="text-orange-500"
+                                  className={usuario.status === 'ativo' ? 'text-orange-500' : 'text-green-500'}
+                                  onClick={() => handleAlterarStatusUsuario(usuario)}
+                                  title={usuario.status === 'ativo' ? 'Desativar usuário' : 'Ativar usuário'}
                                 >
-                                  <UserMinus className="h-4 w-4" />
+                                  {usuario.status === 'ativo' ? (
+                                    <UserMinus className="h-4 w-4" />
+                                  ) : (
+                                    <UserCheck className="h-4 w-4" />
+                                  )}
                                 </Button>
-                              ) : (
+                              </ProtectedContent>
+                              
+                              <ProtectedContent
+                                permissions={['usuarios.excluir']}
+                                cargos={['super_admin', 'administrador']}
+                                anyPermission={true}
+                              >
                                 <Button
                                   variant="ghost" 
                                   size="icon" 
-                                  className="text-green-500"
+                                  className="text-red-500"
+                                  onClick={() => handleExcluirUsuario(usuario)}
+                                  title="Excluir usuário"
                                 >
-                                  <UserCheck className="h-4 w-4" />
+                                  <Trash2 className="h-4 w-4" />
                                 </Button>
-                              )}
-                            </ProtectedContent>
+                              </ProtectedContent>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -545,10 +717,10 @@ function UsuariosContent() {
           <Card>
             <CardHeader>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <CardTitle>Convites Enviados</CardTitle>
-                <Button onClick={handleNovoConvite}>
+                <CardTitle>Histórico de Convites</CardTitle>
+                <Button onClick={handleNovoUsuario}>
                   <Plus className="mr-2 h-4 w-4" />
-                  Enviar Novo Convite
+                  Cadastrar Novo Usuário
                 </Button>
               </div>
             </CardHeader>
@@ -567,10 +739,10 @@ function UsuariosContent() {
                   <Button
                     variant="outline"
                     className="mt-4"
-                    onClick={handleNovoConvite}
+                    onClick={handleNovoUsuario}
                   >
                     <Plus className="mr-2 h-4 w-4" />
-                    Enviar Convite
+                    Cadastrar Usuário
                   </Button>
                 </div>
               ) : (
@@ -656,25 +828,28 @@ function UsuariosContent() {
       {/* Diálogo para enviar convite */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Enviar Convite</DialogTitle>
-            <DialogDescription>
-              Preencha os detalhes para enviar um convite por email.
-            </DialogDescription>
-          </DialogHeader>
+                  <DialogHeader>
+          <DialogTitle>{usuarioParaEditar ? 'Editar Usuário' : 'Cadastrar Novo Usuário'}</DialogTitle>
+          <DialogDescription>
+            {usuarioParaEditar 
+              ? 'Edite os detalhes do usuário no sistema.'
+              : 'Preencha os detalhes para cadastrar um novo usuário no sistema.'
+            }
+          </DialogDescription>
+        </DialogHeader>
           
           {sucessoConvite && (
             <Alert className="bg-green-50 border-green-200 text-green-800">
-              <AlertTitle>Convite enviado com sucesso!</AlertTitle>
+              <AlertTitle>Usuário cadastrado com sucesso!</AlertTitle>
               <AlertDescription>
-                O destinatário receberá um email com o link para criar sua conta.
+                O usuário foi criado e já pode fazer login no sistema.
               </AlertDescription>
             </Alert>
           )}
           
           {erroConvite && (
             <Alert className="bg-red-50 border-red-200 text-red-800">
-              <AlertTitle>Erro ao enviar convite</AlertTitle>
+              <AlertTitle>Erro ao cadastrar usuário</AlertTitle>
               <AlertDescription>{erroConvite}</AlertDescription>
             </Alert>
           )}
@@ -694,6 +869,22 @@ function UsuariosContent() {
                   </FormItem>
                 )}
               />
+              
+              {!usuarioParaEditar && (
+                <FormField
+                  control={form.control}
+                  name="senha"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Senha</FormLabel>
+                      <FormControl>
+                        <Input type="password" placeholder="Senha do usuário" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               
               <FormField
                 control={form.control}
@@ -726,9 +917,12 @@ function UsuariosContent() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
+                        <SelectItem value="super_admin">Super Administrador</SelectItem>
                         <SelectItem value="administrador">Administrador</SelectItem>
                         <SelectItem value="pastor">Pastor</SelectItem>
+                        <SelectItem value="secretario_geral">Secretário Geral</SelectItem>
                         <SelectItem value="secretario">Secretário</SelectItem>
+                        <SelectItem value="tesoureiro_geral">Tesoureiro Geral</SelectItem>
                         <SelectItem value="tesoureiro">Tesoureiro</SelectItem>
                         <SelectItem value="lider_ministerio">Líder de Ministério</SelectItem>
                         <SelectItem value="usuario">Usuário Básico</SelectItem>
@@ -780,7 +974,10 @@ function UsuariosContent() {
                   type="submit" 
                   disabled={enviandoConvite || sucessoConvite}
                 >
-                  {enviandoConvite ? 'Enviando...' : 'Enviar Convite'}
+                  {enviandoConvite 
+                    ? (usuarioParaEditar ? 'Atualizando...' : 'Cadastrando...') 
+                    : (usuarioParaEditar ? 'Atualizar Usuário' : 'Cadastrar Usuário')
+                  }
                 </Button>
               </DialogFooter>
             </form>

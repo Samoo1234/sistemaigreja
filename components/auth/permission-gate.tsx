@@ -33,19 +33,20 @@ export default function PermissionGate({
 
   // Adiciona log para debugar as permissões
   useEffect(() => {
-    // Só faz log quando há permissões a verificar e são relacionadas a usuários
-    if (permissions.some(p => p.includes('usuario'))) {
-      console.log('PermissionGate - Permissões necessárias:', permissions);
-      console.log('PermissionGate - Cargo do usuário:', userData?.cargo);
-      console.log('PermissionGate - Cargo é administrador:', isCargo('administrador'));
-      if (permissions.length > 0) {
-        console.log('PermissionGate - Tem qualquer permissão:', hasAnyPermission(permissions));
-        permissions.forEach(perm => {
-          console.log(`PermissionGate - Tem permissão ${perm}:`, hasPermission(perm));
-        });
-      }
+    // Debug para Tesouraria e outras permissões importantes
+    if (permissions.some(p => p.includes('financas') || p.includes('membros'))) {
+      console.log('PermissionGate Debug:', {
+        permissions,
+        cargos,
+        userCargo: userData?.cargo,
+        hasRequiredPermissions: permissions.length > 0 ? (anyPermission ? hasAnyPermission(permissions) : permissions.every(hasPermission)) : true,
+        hasRequiredCargo: cargos.length > 0 ? cargos.some(isCargo) : true,
+        hasCongregacaoAccess: true, // Não verifica congregação no menu
+        finalResult: (permissions.length > 0 ? (anyPermission ? hasAnyPermission(permissions) : permissions.every(hasPermission)) : true) && 
+                    (cargos.length > 0 ? cargos.some(isCargo) : true)
+      });
     }
-  }, [permissions, userData, hasPermission, hasAnyPermission, isCargo]);
+  }, [permissions, cargos, userData, hasPermission, hasAnyPermission, isCargo, anyPermission]);
 
   // Verifica as permissões
   const hasRequiredPermissions = permissions.length > 0
@@ -62,8 +63,9 @@ export default function PermissionGate({
   // Verifica a congregação se necessário
   let hasCongregacaoAccess = true;
   if (checkCongregacao && congregacaoId) {
-    // Administradores têm acesso a todas as congregações
-    if (userData?.cargo === 'administrador') {
+    // Cargos que têm acesso a todas as congregações
+    const cargosGerais = ['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral'];
+    if (userData?.cargo && cargosGerais.includes(userData.cargo)) {
       hasCongregacaoAccess = true;
     } else {
       // Para outros usuários, verifica se a congregação corresponde
@@ -71,7 +73,8 @@ export default function PermissionGate({
     }
   } else if (checkCongregacao && !congregacaoId && congregacaoAtual) {
     // Se não foi especificado uma congregação, usa a atual do contexto
-    if (userData?.cargo === 'administrador') {
+    const cargosGerais = ['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral'];
+    if (userData?.cargo && cargosGerais.includes(userData.cargo)) {
       hasCongregacaoAccess = true;
     } else {
       hasCongregacaoAccess = userData?.congregacaoId === congregacaoAtual.id;

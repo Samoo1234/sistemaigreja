@@ -51,8 +51,9 @@ export default function ProtectedContent({
   // Verifica a congregação se necessário
   let hasCongregacaoAccess = true;
   if (checkCongregacao && congregacaoId) {
-    // Administradores têm acesso a todas as congregações
-    if (userData?.cargo === 'administrador') {
+    // Cargos que têm acesso a todas as congregações
+    const cargosGerais = ['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral'];
+    if (userData?.cargo && cargosGerais.includes(userData.cargo)) {
       hasCongregacaoAccess = true;
     } else {
       // Para outros usuários, verifica se a congregação corresponde
@@ -60,7 +61,8 @@ export default function ProtectedContent({
     }
   } else if (checkCongregacao && !congregacaoId && congregacaoAtual) {
     // Se não foi especificado uma congregação, usa a atual do contexto
-    if (userData?.cargo === 'administrador') {
+    const cargosGerais = ['super_admin', 'administrador', 'secretario_geral', 'tesoureiro_geral'];
+    if (userData?.cargo && cargosGerais.includes(userData.cargo)) {
       hasCongregacaoAccess = true;
     } else {
       hasCongregacaoAccess = userData?.congregacaoId === congregacaoAtual.id;
